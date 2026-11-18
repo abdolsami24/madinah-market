@@ -117,7 +117,7 @@ export default function TrackPage() {
 
   return (
     <>
-      <header className="site-header">
+      <header className="site-header standalone">
         <h1>
           Madinah <span className="gold">Market</span>
         </h1>

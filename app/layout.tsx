@@ -4,9 +4,9 @@ import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 import TopNav from "@/components/TopNav";
 
 export const metadata: Metadata = {
-  title: "Madinah Bakery & Kabob — Halal Kabobs in Aurora, CO",
+  title: "Madinah Market — Halal Kabobs in Aurora, CO",
   description:
-    "Madinah Bakery & Kabob — Aurora, Colorado · 100% halal. Fire-grilled kabobs, fresh bread and saffron rice. Order pickup or delivery online. 3126 S Parker Rd, Aurora, CO. Call 720-763-0786.",
+    "Madinah Market — Aurora, Colorado · 100% halal. Fire-grilled kabobs, fresh bread and saffron rice. Order pickup or delivery online. 3126 S Parker Rd, Aurora, CO. Call 720-763-0786.",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: "/icons/icon-192.png",
@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#7f1d1d",
+  themeColor: "#0b3d2c",
   width: "device-width",
   initialScale: 1,
 };

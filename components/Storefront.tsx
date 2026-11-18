@@ -1,6 +1,6 @@
 "use client";
 
-// Madinah Bakery & Kabob menu page: category sidebar + search, dish
+// Madinah Market menu page: category sidebar + search, dish
 // grid, per-dish options popup, cart (localStorage), pickup/delivery
 // toggle, live delivery-fee quote, tip selector, live price breakdown
 // and the two-step checkout. The server recomputes every total — the
@@ -549,7 +549,10 @@ export default function Storefront({
           <p>{m.description}</p>
           {hasOptions && <p className="has-options">✦ Has add-ons &amp; options</p>}
           <div className="price-row">
-            <span className="price">{formatCents(m.price_cents)}</span>
+            <span className="price">
+              {hasOptions && <span className="from">from </span>}
+              {formatCents(m.price_cents)}
+            </span>
             {soldOut ? (
               <>
                 <span className="soldout-badge">Sold out</span>
@@ -564,7 +567,7 @@ export default function Storefront({
               </>
             ) : hasOptions ? (
               <button type="button" className="add-btn" onClick={() => setPopupItem(m)}>
-                {inCart > 0 ? `Add more · ${inCart} in cart` : "Add +"}
+                {inCart > 0 ? `Add more · ${inCart} in cart` : "+ Add"}
               </button>
             ) : orderingClosed && qty === 0 ? (
               <button type="button" className="add-btn" disabled>
@@ -572,7 +575,7 @@ export default function Storefront({
               </button>
             ) : qty === 0 ? (
               <button type="button" className="add-btn" onClick={() => setPlainQty(m, 1)}>
-                Add
+                + Add
               </button>
             ) : (
               <span className="qty-controls">
@@ -1087,7 +1090,7 @@ export default function Storefront({
       </main>
 
       <footer className="site-footer">
-        Madinah Bakery &amp; Kabob · 3126 S Parker Rd, Aurora, CO 80014 ·{" "}
+        Madinah Market · 3126 S Parker Rd, Aurora, CO 80014 ·{" "}
         <a href="tel:+17207630786">720-763-0786</a>
         <br />
         🏃 Pickup: Mon–Sat {formatWindow(pickupWins[1])} · Sun {formatWindow(pickupWins[0])}
