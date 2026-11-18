@@ -32,6 +32,7 @@ import {
 import { HOURS_SETTING_KEYS, parseHHMM } from "@/lib/hours";
 import { getMenuItem } from "@/lib/menu";
 import { getDbMenu } from "@/lib/menuDb";
+import { logAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
@@ -113,6 +114,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Image is too large (max 5 MB)." }, { status: 400 });
       }
       await uploadDishPhoto(itemId, await file.arrayBuffer(), file.type);
+      await logAudit(user.email ?? user.id, "admin.photo_upload", { item_id: itemId });
     } catch (err) {
       console.error("[admin] photo upload failed:", err);
       return NextResponse.json({ error: "Photo upload failed." }, { status: 500 });
@@ -126,12 +128,14 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
+  const actor = user.email ?? user.id;
   try {
     switch (body.action) {
       case "set_setting": {
         const key = String(body.key ?? "");
         if (!isSettingKey(key)) throw new Error("Unknown setting");
         await setSetting(key, body.value === true);
+        await logAudit(actor, "admin.set_setting", { key, value: body.value === true });
         break;
       }
       case "set_hours": {
@@ -158,6 +162,7 @@ export async function POST(req: Request) {
           }
         }
         await setHoursConfig(values);
+        await logAudit(actor, "admin.set_hours", { ...values });
         break;
       }
       case "set_availability": {
@@ -167,6 +172,10 @@ export async function POST(req: Request) {
           throw new Error("Unknown dish");
         }
         await setDishAvailability(itemId, body.available === true);
+        await logAudit(actor, "admin.set_availability", {
+          item_id: itemId,
+          available: body.available === true,
+        });
         break;
       }
       case "promo_create": {
@@ -181,20 +190,27 @@ export async function POST(req: Request) {
           }
         }
         await createPromotion(title, text, itemId || null);
+        await logAudit(actor, "admin.promo_create", { title, item_id: itemId || null });
         break;
       }
       case "promo_set_active": {
         await setPromotionActive(Math.floor(Number(body.id)), body.active === true);
+        await logAudit(actor, "admin.promo_set_active", {
+          id: Math.floor(Number(body.id)),
+          active: body.active === true,
+        });
         break;
       }
       case "promo_delete": {
         await deletePromotion(Math.floor(Number(body.id)));
+        await logAudit(actor, "admin.promo_delete", { id: Math.floor(Number(body.id)) });
         break;
       }
       case "add_category": {
         const name = String(body.name ?? "").trim().slice(0, 60);
         if (!name) throw new Error("A category needs a name");
         await addCategory(name);
+        await logAudit(actor, "admin.add_category", { name });
         break;
       }
       case "add_item": {
@@ -203,12 +219,27 @@ export async function POST(req: Request) {
         const price_cents = Math.floor(Number(body.price_cents));
         const category = String(body.category ?? "").trim().slice(0, 60);
         const number = String(body.number ?? "").trim().slice(0, 10);
+        const station = String(body.station ?? "").trim().slice(0, 40);
         if (!name) throw new Error("A dish needs a name");
         if (!category) throw new Error("Choose a category");
         if (!Number.isFinite(price_cents) || price_cents < 1 || price_cents > 100000) {
           throw new Error("Enter a valid price");
         }
-        await addMenuItem({ name, description, price_cents, category, number });
+        const newId = await addMenuItem({
+          name,
+          description,
+          price_cents,
+          category,
+          number,
+          station: station || undefined,
+        });
+        await logAudit(actor, "admin.add_item", {
+          id: newId,
+          name,
+          category,
+          price_cents,
+          station: station || "main",
+        });
         break;
       }
       default:

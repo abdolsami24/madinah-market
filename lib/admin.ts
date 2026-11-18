@@ -245,6 +245,7 @@ export async function addMenuItem(input: {
   price_cents: number;
   category: string;
   number?: string;
+  station?: string;
 }): Promise<string> {
   const supabase = getServiceClient();
   // Unique slug id from the name.
@@ -261,7 +262,7 @@ export async function addMenuItem(input: {
   const { count } = await supabase
     .from("menu_items")
     .select("id", { count: "exact", head: true });
-  const { error } = await supabase.from("menu_items").insert({
+  const row = {
     id,
     name: input.name,
     description: input.description,
@@ -269,7 +270,15 @@ export async function addMenuItem(input: {
     category: input.category,
     number: input.number || null,
     sort: count ?? 0,
-  });
+  };
+  // The station column arrives with supabase/admin-panel-schema.sql; until
+  // it exists, insert without it (the panel defaults every dish to "main").
+  let { error } = await supabase
+    .from("menu_items")
+    .insert({ ...row, station: input.station?.trim() || "main" });
+  if (error && /station/i.test(error.message)) {
+    ({ error } = await supabase.from("menu_items").insert(row));
+  }
   if (error) throw error;
   return id;
 }

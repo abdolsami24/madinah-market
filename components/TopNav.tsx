@@ -4,7 +4,7 @@
 // Visit, Account): a thin info bar over a deep-green "stage" header with
 // the brand, pill navigation and a saffron bag button — mirroring the
 // reference site's WebHeader. Hidden on the staff screens (/kitchen,
-// /display) which are full-screen boards of their own.
+// /display, /admin) which are full-screen apps of their own.
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -42,7 +42,11 @@ export default function TopNav() {
     setOpen(false);
   }, [pathname]);
 
-  if (pathname?.startsWith("/kitchen") || pathname?.startsWith("/display")) {
+  if (
+    pathname?.startsWith("/kitchen") ||
+    pathname?.startsWith("/display") ||
+    pathname?.startsWith("/admin")
+  ) {
     return null;
   }
 
