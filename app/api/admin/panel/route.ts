@@ -33,6 +33,7 @@ import { smsPickupReady } from "@/lib/sms";
 import { shouldSendReadySms } from "@/lib/kitchenStatus";
 import { doordashMode } from "@/lib/doordash";
 import { twilioConfigured } from "@/lib/sms";
+import { freshkdsConfigured } from "@/lib/freshkds";
 
 export const dynamic = "force-dynamic";
 
@@ -97,6 +98,9 @@ export async function GET(req: Request) {
           doordash_mode: doordashMode(),
           doordash_webhook_secret_configured: Boolean(process.env.DOORDASH_WEBHOOK_SECRET),
           twilio_configured: twilioConfigured(),
+          // Fresh KDS kitchen screens (token presence only — the
+          // token value itself never leaves the server).
+          freshkds_configured: freshkdsConfigured(),
         });
       default:
         return NextResponse.json({ error: "Unknown section" }, { status: 400 });

@@ -55,6 +55,10 @@ export interface PanelOrder {
   // supabase/service-fee-promo-schema.sql has run.
   service_fee_cents?: number;
   free_delivery?: boolean;
+  // Fresh KDS — present once supabase/freshkds-schema.sql has run.
+  freshkds_status?: string | null;
+  freshkds_error?: string | null;
+  freshkds_sent_at?: string | null;
   /** Joined from delivery_quotes (mode/fee/expiry) when available. */
   delivery_quote?: {
     provider_mode: string;

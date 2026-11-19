@@ -102,6 +102,10 @@ interface PanelOrder {
   delivery_markup_cents?: number;
   service_fee_cents?: number;
   free_delivery?: boolean;
+  // Fresh KDS — absent until supabase/freshkds-schema.sql runs.
+  freshkds_status?: string | null;
+  freshkds_error?: string | null;
+  freshkds_sent_at?: string | null;
   delivery_quote?: {
     provider_mode: string;
     fee_cents: number;
@@ -181,6 +185,7 @@ interface SecurityData {
   doordash_mode?: string;
   doordash_webhook_secret_configured?: boolean;
   twilio_configured?: boolean;
+  freshkds_configured?: boolean;
 }
 
 type Section =
@@ -948,6 +953,29 @@ export default function AdminPanel() {
                     </div>
                   </>
                 )}
+                <h3>Fresh KDS</h3>
+                <div className="ops-detail-grid">
+                  <span>Status</span>
+                  <strong>
+                    {selectedOrder.freshkds_status === "sent"
+                      ? `Sent${
+                          selectedOrder.freshkds_sent_at
+                            ? ` — ${fmtTime(selectedOrder.freshkds_sent_at)}`
+                            : ""
+                        }`
+                      : selectedOrder.freshkds_status === "failed"
+                        ? "Failed"
+                        : "Not sent — Fresh KDS not configured"}
+                  </strong>
+                  {selectedOrder.freshkds_error && (
+                    <>
+                      <span>Fresh KDS error</span>
+                      <strong className="ops-status-off">
+                        {selectedOrder.freshkds_error}
+                      </strong>
+                    </>
+                  )}
+                </div>
                 <h3>Items</h3>
                 <div>
                   {(selectedOrder.items_json ?? []).map((line, i) => (
@@ -2152,6 +2180,12 @@ export default function AdminPanel() {
                   {security.twilio_configured
                     ? "configured — customers get order texts."
                     : "not configured — customer text messages are skipped."}
+                </li>
+                <li>
+                  Fresh KDS screens:{" "}
+                  {security.freshkds_configured
+                    ? "configured — paid orders are also sent to the Fresh KDS screens."
+                    : "not configured — paid orders go only to this site's kitchen page."}
                 </li>
               </>
             ) : (

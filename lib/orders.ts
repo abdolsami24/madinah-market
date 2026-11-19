@@ -7,6 +7,7 @@ import { notifyOwner, type NotifyOrder } from "./email";
 import type { ShipdayOrder } from "./shipday";
 import { dispatchDeliveryForOrder } from "./delivery";
 import { smsOrderConfirmed } from "./sms";
+import { sendOrderToFreshKds } from "./freshkds";
 import { earnPointsForPaidOrder } from "./points";
 
 export type OrderRow = NotifyOrder &
@@ -27,6 +28,12 @@ export type OrderRow = NotifyOrder &
     // arrive with supabase/service-fee-promo-schema.sql.
     service_fee_cents?: number;
     free_delivery?: boolean;
+    // Fresh KDS — optional because the columns arrive with
+    // supabase/freshkds-schema.sql; absent on a not-yet-migrated DB.
+    scheduled_for?: string | null;
+    freshkds_status?: string | null;
+    freshkds_error?: string | null;
+    freshkds_sent_at?: string | null;
   };
 
 export async function getOrder(orderId: number): Promise<OrderRow | null> {
@@ -119,6 +126,18 @@ export async function markOrderPaid(
     } catch (err) {
       console.error("[orders] DoorDash dispatch failed:", err);
     }
+  }
+
+  // Fresh KDS kitchen screens (best-effort; complete no-op until
+  // FRESHKDS_TOKEN is set in Vercel). Runs only on the unpaid -> paid
+  // transition, like every side-effect here, so each order is sent
+  // exactly once; the result is recorded on the order for the admin
+  // panel and a failure never touches the payment flow. Placed after
+  // the DoorDash block so a delivery order's external id is known.
+  try {
+    await sendOrderToFreshKds(updated);
+  } catch (err) {
+    console.error("[orders] Fresh KDS send failed:", err);
   }
 
   // Customer confirmation SMS (best-effort; no-op until Twilio is
