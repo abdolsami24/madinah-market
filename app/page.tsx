@@ -233,6 +233,9 @@ export default async function HomePage() {
         <a href="tel:+17207630786">720-763-0786</a>
         <br />
         Aurora, Colorado · 100% Halal · Kabob, Turkish, Afghan Persian &amp; Middle Eastern
+        <br />
+        <a href="/privacy">Privacy Policy</a> ·{" "}
+        <a href="/terms">Terms &amp; Conditions</a>
       </footer>
     </>
   );

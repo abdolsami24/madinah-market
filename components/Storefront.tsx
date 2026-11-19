@@ -1047,6 +1047,26 @@ export default function Storefront({
                 inputMode="tel"
               />
             </div>
+            <p
+              style={{
+                fontSize: "0.8rem",
+                opacity: 0.75,
+                margin: "0.25rem 0 0.75rem",
+                lineHeight: 1.5,
+              }}
+            >
+              By providing your phone number, you agree to receive text
+              messages from Madinah Market about your order (confirmation,
+              ready-for-pickup, and delivery updates). Message frequency
+              varies; msg &amp; data rates may apply. Reply STOP to opt out.{" "}
+              <a href="/privacy" target="_blank" rel="noreferrer">
+                Privacy Policy
+              </a>{" "}
+              ·{" "}
+              <a href="/terms" target="_blank" rel="noreferrer">
+                Terms &amp; Conditions
+              </a>
+            </p>
 
             {fulfillment === "delivery" ? (
               <div className="field">
