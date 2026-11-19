@@ -24,9 +24,11 @@ interface TrackedOrder {
     instructions?: string;
   }[];
   subtotal_cents: number;
+  service_fee_cents?: number;
   tax_cents: number;
   delivery_fee_cents: number;
   delivery_markup_cents?: number;
+  free_delivery?: boolean;
   tip_cents: number;
   total_cents: number;
   fulfillment: string;
@@ -230,26 +232,30 @@ export default function TrackPage() {
                 <span>Subtotal</span>
                 <span>{formatCents(order.subtotal_cents)}</span>
               </div>
+              {(order.service_fee_cents ?? 0) > 0 && (
+                <div className="row">
+                  <span>Service fee</span>
+                  <span>{formatCents(order.service_fee_cents ?? 0)}</span>
+                </div>
+              )}
               <div className="row">
                 <span>Tax</span>
                 <span>{formatCents(order.tax_cents)}</span>
               </div>
-              {order.delivery_fee_cents > 0 && (
-                <div className="row">
-                  <span>
-                    {order.delivery_provider === "doordash"
-                      ? "Delivery fee (DoorDash)"
-                      : "Delivery fee"}
-                  </span>
-                  <span>{formatCents(order.delivery_fee_cents)}</span>
-                </div>
-              )}
-              {(order.delivery_markup_cents ?? 0) > 0 && (
-                <div className="row">
-                  <span>Delivery service fee</span>
-                  <span>{formatCents(order.delivery_markup_cents ?? 0)}</span>
-                </div>
-              )}
+              {order.fulfillment === "delivery" &&
+                (order.free_delivery ||
+                  order.delivery_fee_cents + (order.delivery_markup_cents ?? 0) > 0) && (
+                  <div className="row">
+                    <span>Delivery fee</span>
+                    <span>
+                      {order.free_delivery
+                        ? "FREE 🎉"
+                        : formatCents(
+                            order.delivery_fee_cents + (order.delivery_markup_cents ?? 0)
+                          )}
+                    </span>
+                  </div>
+                )}
               {order.tip_cents > 0 && (
                 <div className="row">
                   <span>Tip</span>

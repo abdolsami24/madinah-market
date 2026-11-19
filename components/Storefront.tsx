@@ -19,6 +19,12 @@ import {
 } from "@/lib/cartClient";
 import DishPopup from "./DishPopup";
 import {
+  computeServiceFeeCents,
+  DEFAULT_SERVICE_FEE,
+  type FreeDeliveryConfig,
+  type ServiceFeeConfig,
+} from "@/lib/feePricing";
+import {
   PICKUP_HOURS,
   DELIVERY_HOURS,
   DEFAULT_HOURS_CONFIG,
@@ -41,8 +47,12 @@ type FeeState =
       quote_id: string;
       /** Pure DoorDash fee. */
       fee_cents: number;
-      /** Restaurant's extra "Delivery service fee" (markup), if any. */
+      /** Restaurant's extra delivery markup, if any. */
       service_fee_cents: number;
+      /** The ONE delivery amount the customer pays (fee + markup merged). */
+      delivery_charge_cents: number;
+      /** True when the Free Delivery promotion zeroed the charge. */
+      free_delivery: boolean;
       label: string;
       expires_at: string;
     }
@@ -85,10 +95,14 @@ export default function Storefront({
   testMode,
   menu,
   categories,
+  fees,
 }: {
   testMode: boolean;
   menu: MenuItem[];
   categories: string[];
+  /** Service Fee / Free Delivery settings, read server-side (the
+   * checkout server recomputes everything — display only). */
+  fees?: { service_fee: ServiceFeeConfig; free_delivery: FreeDeliveryConfig };
 }) {
   const [cart, setCart] = useState<CartLine[]>([]);
   const [cartLoaded, setCartLoaded] = useState(false);
@@ -338,11 +352,15 @@ export default function Storefront({
     tipCustom && Number.isFinite(tipCustomCents)
       ? Math.min(Math.max(tipCustomCents, 0), 20000)
       : Math.round((subtotal * Math.min(Math.max(tipPercent, 0), 30)) / 100);
+  // Service Fee preview — same pure function the server uses, on the
+  // food subtotal (before the loyalty discount, exactly like checkout).
+  const serviceFeePreview = computeServiceFeeCents(
+    subtotal,
+    fees?.service_fee ?? DEFAULT_SERVICE_FEE
+  );
   const deliveryFee =
-    fulfillment === "delivery" && fee.kind === "ok"
-      ? fee.fee_cents + fee.service_fee_cents
-      : 0;
-  const total = subtotal - discountPreview + tax + deliveryFee + tip;
+    fulfillment === "delivery" && fee.kind === "ok" ? fee.delivery_charge_cents : 0;
+  const total = subtotal - discountPreview + serviceFeePreview + tax + deliveryFee + tip;
 
   // Add (or merge) a cart line: same dish + same options + same
   // instructions merges; anything different stays a separate line.
@@ -451,6 +469,10 @@ export default function Storefront({
             quote_id: String(data.quote_id),
             fee_cents: Number(data.fee_cents) || 0,
             service_fee_cents: Number(data.service_fee_cents) || 0,
+            delivery_charge_cents:
+              Number(data.delivery_charge_cents) ||
+              (Number(data.fee_cents) || 0) + (Number(data.service_fee_cents) || 0),
+            free_delivery: data.free_delivery === true,
             label: eta,
             expires_at: String(data.expires_at),
           });
@@ -467,7 +489,7 @@ export default function Storefront({
     return () => {
       if (feeTimer.current) clearTimeout(feeTimer.current);
     };
-  }, [address, fulfillment, phone, tip, quoteNonce]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [address, fulfillment, phone, tip, quoteNonce, subtotal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Quote expiry: when the stored quote lapses, refresh it and show
   // the (possibly changed) fee before the customer pays — a changed
@@ -1039,9 +1061,11 @@ export default function Storefront({
                 {fee.kind === "loading" && <div className="fee-msg">Checking delivery fee…</div>}
                 {fee.kind === "ok" && (
                   <div className="fee-msg ok">
-                    ✅ Delivery fee {formatCents(fee.fee_cents)} (DoorDash)
-                    {fee.service_fee_cents > 0 &&
-                      ` + ${formatCents(fee.service_fee_cents)} service fee`}
+                    {fee.free_delivery
+                      ? `🎉 Free delivery applied — your order reached ${formatCents(
+                          fees?.free_delivery.threshold_cents ?? 0
+                        )}!`
+                      : `✅ Delivery fee ${formatCents(fee.delivery_charge_cents)}`}
                     {fee.label ? ` — ${fee.label}` : ""}
                   </div>
                 )}
@@ -1141,20 +1165,26 @@ export default function Storefront({
                   <span>−{formatCents(discountPreview)}</span>
                 </div>
               )}
+              {serviceFeePreview > 0 && (
+                <div className="row">
+                  <span>Service fee</span>
+                  <span>{formatCents(serviceFeePreview)}</span>
+                </div>
+              )}
               <div className="row">
                 <span>Sales tax (8%)</span>
                 <span>{formatCents(tax)}</span>
               </div>
               {fulfillment === "delivery" && (
                 <div className="row">
-                  <span>Delivery fee (DoorDash)</span>
-                  <span>{fee.kind === "ok" ? formatCents(fee.fee_cents) : "—"}</span>
-                </div>
-              )}
-              {fulfillment === "delivery" && fee.kind === "ok" && fee.service_fee_cents > 0 && (
-                <div className="row">
-                  <span>Delivery service fee</span>
-                  <span>{formatCents(fee.service_fee_cents)}</span>
+                  <span>Delivery fee</span>
+                  <span>
+                    {fee.kind === "ok"
+                      ? fee.free_delivery
+                        ? "FREE 🎉"
+                        : formatCents(fee.delivery_charge_cents)
+                      : "—"}
+                  </span>
                 </div>
               )}
               {tip > 0 && (

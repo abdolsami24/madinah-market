@@ -30,17 +30,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ found: false }, { status: 400 });
   }
   const supabase = getServiceClient();
-  // Stage 3 columns are selected when they exist; until
-  // supabase/stage3-schema.sql runs, fall back to the legacy list.
+  // Optional columns are selected when they exist; until the matching
+  // schema files run (stage3-schema.sql, then
+  // service-fee-promo-schema.sql), fall back tier by tier to shorter
+  // column lists so tracking never breaks on a not-yet-migrated DB.
   const baseCols =
     "id, customer_phone, items_json, subtotal_cents, tax_cents, delivery_fee_cents, tip_cents, total_cents, fulfillment, delivery_address, payment_status, kitchen_status, shipday_status, created_at";
+  const stage3Cols = `${baseCols}, delivery_provider, delivery_status, delivery_markup_cents`;
+  const feeCols = `${stage3Cols}, service_fee_cents, free_delivery`;
   let { data: order } = await supabase
     .from("orders")
-    .select(
-      `${baseCols}, delivery_provider, delivery_status, delivery_markup_cents`
-    )
+    .select(feeCols)
     .eq("id", orderId)
     .maybeSingle();
+  if (!order) {
+    ({ data: order } = await supabase
+      .from("orders")
+      .select(stage3Cols)
+      .eq("id", orderId)
+      .maybeSingle());
+  }
   if (!order) {
     ({ data: order } = await supabase
       .from("orders")
@@ -52,6 +61,8 @@ export async function POST(req: Request) {
     delivery_provider?: string | null;
     delivery_status?: string | null;
     delivery_markup_cents?: number;
+    service_fee_cents?: number;
+    free_delivery?: boolean;
   }) | null;
 
   if (!full || last10(String(full.customer_phone ?? "")) !== last10(phone)) {
@@ -65,9 +76,11 @@ export async function POST(req: Request) {
       id: full.id,
       items: full.items_json,
       subtotal_cents: full.subtotal_cents,
+      service_fee_cents: full.service_fee_cents ?? 0,
       tax_cents: full.tax_cents,
       delivery_fee_cents: full.delivery_fee_cents,
       delivery_markup_cents: full.delivery_markup_cents ?? 0,
+      free_delivery: full.free_delivery ?? false,
       tip_cents: full.tip_cents,
       total_cents: full.total_cents,
       fulfillment: full.fulfillment,

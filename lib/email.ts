@@ -13,10 +13,14 @@ export interface NotifyOrder {
   delivery_address: string | null;
   items_json: { name: string; qty: number; line_total_cents: number }[];
   subtotal_cents: number;
+  /** General Service Fee charged on the order (0 when off). */
+  service_fee_cents?: number;
   tax_cents: number;
   delivery_fee_cents: number;
-  /** Stage 3: the restaurant's extra delivery service fee, if any. */
+  /** Stage 3: the restaurant's extra delivery markup, if any. */
   delivery_markup_cents?: number;
+  /** True when the Free Delivery promotion zeroed the delivery charge. */
+  free_delivery?: boolean;
   tip_cents: number;
   total_cents: number;
   payment_status: string;
@@ -39,11 +43,19 @@ export async function notifyOwner(order: NotifyOrder): Promise<void> {
     lines,
     "",
     `Subtotal: ${formatCents(order.subtotal_cents)}`,
-    `Tax (8%): ${formatCents(order.tax_cents)}`,
-    order.delivery_fee_cents > 0 ? `Delivery fee (DoorDash): ${formatCents(order.delivery_fee_cents)}` : "",
-    (order.delivery_markup_cents ?? 0) > 0
-      ? `Delivery service fee: ${formatCents(order.delivery_markup_cents ?? 0)}`
+    (order.service_fee_cents ?? 0) > 0
+      ? `Service fee: ${formatCents(order.service_fee_cents ?? 0)}`
       : "",
+    `Tax (8%): ${formatCents(order.tax_cents)}`,
+    // One merged delivery line (DoorDash fee + extra markup), FREE
+    // when the Free Delivery promotion applied.
+    order.fulfillment === "delivery" && order.free_delivery
+      ? "Delivery fee: FREE (promotion)"
+      : order.delivery_fee_cents + (order.delivery_markup_cents ?? 0) > 0
+        ? `Delivery fee: ${formatCents(
+            order.delivery_fee_cents + (order.delivery_markup_cents ?? 0)
+          )}`
+        : "",
     order.tip_cents > 0 ? `Tip: ${formatCents(order.tip_cents)}` : "",
     `TOTAL: ${formatCents(order.total_cents)}`,
   ]

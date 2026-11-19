@@ -9,12 +9,24 @@
 // distance bands — it is re-loaded from the stored DoorDash quote
 // (delivery_quote_id, created by /api/delivery-quote), verified
 // unexpired and for this exact address. The restaurant's extra
-// "Delivery service fee" (markup settings) is added on top, here on
-// the server, and stored/displayed as its own line.
+// delivery markup is added on top, here on the server; the customer
+// is charged ONE merged "Delivery fee" (the split is stored on the
+// order and shown in the admin panel only).
+// Service Fee + Free Delivery: the general Service Fee (all orders,
+// never taxed, never waived) and the Free Delivery promotion
+// (delivery orders whose food subtotal reaches the admin's amount
+// pay $0 delivery) are likewise computed HERE from admin settings
+// and the server-built subtotal — never from client-sent values.
 
 import { NextResponse } from "next/server";
 import { buildLines, computeTotals, computeTipCents } from "@/lib/pricing";
 import { verifyQuoteForCheckout, getDeliverySettings, markupFor } from "@/lib/delivery";
+import { getFeeSettings } from "@/lib/fees";
+import {
+  computeServiceFeeCents,
+  customerDeliveryCents,
+  freeDeliveryApplies,
+} from "@/lib/feePricing";
 import { formatCents } from "@/lib/menu";
 import { getServiceClient, supabaseConfigured, verifyCustomerUser } from "@/lib/supabase/server";
 import { getStripe, siteUrl, stripeTestMode } from "@/lib/stripe";
@@ -88,13 +100,18 @@ export async function POST(req: Request) {
 
   const subtotal = lines.reduce((s, l) => s + l.line_total_cents, 0);
 
+  // Service Fee (all orders) + Free Delivery settings — fail-soft OFF.
+  const feeSettings = await getFeeSettings();
+  const service_fee_cents = computeServiceFeeCents(subtotal, feeSettings.service_fee);
+
   // Delivery fee comes ONLY from a stored DoorDash quote — the browser
   // never sets it. The quote must be unexpired and for this exact
-  // address. The restaurant's extra service fee is computed from the
+  // address. The restaurant's extra markup is computed from the
   // current admin settings at this moment.
   let delivery_fee_cents = 0;
   let delivery_markup_cents = 0;
   let delivery_quote_row_id: string | null = null;
+  let free_delivery = false;
   if (fulfillment === "delivery") {
     if (delivery_address.length < 6) return bad("Please enter the delivery address");
     const quoteId = String(body.delivery_quote_id ?? "").trim();
@@ -135,6 +152,12 @@ export async function POST(req: Request) {
       );
     }
     delivery_markup_cents = markupFor(delivery_fee_cents, deliverySettings);
+    // Free Delivery promotion: decided from the STORED quote + the
+    // server-computed food subtotal — the browser's numbers play no
+    // part. The quote/fee/markup are still stored on the order (the
+    // courier is dispatched exactly as before); the customer is
+    // simply charged $0 for delivery and the restaurant absorbs it.
+    free_delivery = freeDeliveryApplies(subtotal, feeSettings.free_delivery);
   }
   const tip_cents = computeTipCents(
     subtotal,
@@ -162,14 +185,21 @@ export async function POST(req: Request) {
       console.error("[checkout] points balance check failed:", err);
     }
   }
-  // Totals carry the delivery charge as fee + service fee combined;
-  // the order row stores the two parts separately (delivery_fee_cents
-  // stays the PURE DoorDash fee).
+  // The customer pays ONE merged delivery charge (pure DoorDash fee +
+  // markup), or $0 when the Free Delivery promotion applies; the order
+  // row stores the parts separately (delivery_fee_cents stays the PURE
+  // DoorDash fee) so the admin panel can show the split / absorbed fee.
+  const customer_delivery_cents = customerDeliveryCents(
+    delivery_fee_cents,
+    delivery_markup_cents,
+    free_delivery
+  );
   const totals = computeTotals(
     lines,
-    delivery_fee_cents + delivery_markup_cents,
+    customer_delivery_cents,
     tip_cents,
-    discount_cents
+    discount_cents,
+    service_fee_cents
   );
 
   const supabase = getServiceClient();
@@ -197,9 +227,26 @@ export async function POST(req: Request) {
       ...baseRow,
       delivery_quote_id: delivery_quote_row_id,
       delivery_markup_cents,
+      service_fee_cents: totals.service_fee_cents,
+      free_delivery,
     })
     .select("id")
     .single();
+  if (error && /(delivery_|service_fee|free_delivery)/i.test(error.message)) {
+    // supabase/service-fee-promo-schema.sql not run yet — save the
+    // order without the two newest columns (totals are unchanged;
+    // only the service-fee / free-delivery record is not stored).
+    console.warn("[checkout] Service-fee columns missing — inserting without them.");
+    ({ data: order, error } = await supabase
+      .from("orders")
+      .insert({
+        ...baseRow,
+        delivery_quote_id: delivery_quote_row_id,
+        delivery_markup_cents,
+      })
+      .select("id")
+      .single());
+  }
   if (error && /delivery_/i.test(error.message)) {
     // supabase/stage3-schema.sql not run yet — save the order without
     // the Stage 3 columns (the delivery still works end to end; only
@@ -249,6 +296,16 @@ export async function POST(req: Request) {
         },
       },
     }));
+    if (totals.service_fee_cents > 0) {
+      lineItems.push({
+        quantity: 1,
+        price_data: {
+          currency: "usd",
+          unit_amount: totals.service_fee_cents,
+          product_data: { name: "Service fee" },
+        },
+      });
+    }
     if (totals.tax_cents > 0) {
       lineItems.push({
         quantity: 1,
@@ -259,23 +316,16 @@ export async function POST(req: Request) {
         },
       });
     }
-    if (delivery_fee_cents > 0) {
+    // ONE merged delivery line (DoorDash fee + extra markup). When
+    // the Free Delivery promotion applied, the charge is $0 and no
+    // line is added — the Stripe total still equals the order total.
+    if (customer_delivery_cents > 0) {
       lineItems.push({
         quantity: 1,
         price_data: {
           currency: "usd",
-          unit_amount: delivery_fee_cents,
-          product_data: { name: "Delivery fee (DoorDash)" },
-        },
-      });
-    }
-    if (delivery_markup_cents > 0) {
-      lineItems.push({
-        quantity: 1,
-        price_data: {
-          currency: "usd",
-          unit_amount: delivery_markup_cents,
-          product_data: { name: "Delivery service fee" },
+          unit_amount: customer_delivery_cents,
+          product_data: { name: "Delivery fee" },
         },
       });
     }

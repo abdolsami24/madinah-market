@@ -1,4 +1,4 @@
-// Money rules for Madinah Bakery & Kabob. ALL money is integer cents.
+// Money rules for Madinah Market. ALL money is integer cents.
 // - Sales tax: 8% of subtotal (TAX_RATE env, default 0.08), rounded to cent.
 // - Tip: percent of subtotal (0-30%) or a custom amount capped at $200.00.
 // - Delivery fee: straight-line distance bands from the restaurant.
@@ -26,6 +26,8 @@ export interface OrderLine {
 export interface Totals {
   subtotal_cents: number;
   discount_cents: number;
+  /** General Service Fee (lib/feePricing.ts) — never taxed. */
+  service_fee_cents: number;
   tax_cents: number;
   delivery_fee_cents: number;
   tip_cents: number;
@@ -134,19 +136,29 @@ export function computeTotals(
   lines: OrderLine[],
   delivery_fee_cents: number,
   tip_cents: number,
-  discount_cents = 0
+  discount_cents = 0,
+  service_fee_cents = 0
 ): Totals {
   const subtotal_cents = lines.reduce((sum, l) => sum + l.line_total_cents, 0);
   // Loyalty discount comes off the subtotal BEFORE tax.
   const safe_discount = Math.min(Math.max(discount_cents, 0), subtotal_cents);
+  // Tax is 8% of the (discounted) food subtotal ONLY — the service fee
+  // is never taxed and never changes the tax amount.
   const tax_cents = taxFor(subtotal_cents - safe_discount);
+  const safe_service_fee = Math.max(0, Math.round(service_fee_cents) || 0);
   return {
     subtotal_cents,
     discount_cents: safe_discount,
+    service_fee_cents: safe_service_fee,
     tax_cents,
     delivery_fee_cents,
     tip_cents,
     total_cents:
-      subtotal_cents - safe_discount + tax_cents + delivery_fee_cents + tip_cents,
+      subtotal_cents -
+      safe_discount +
+      safe_service_fee +
+      tax_cents +
+      delivery_fee_cents +
+      tip_cents,
   };
 }

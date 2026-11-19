@@ -35,8 +35,10 @@ export function mockDeliveryFeeCents(miles: number, tipCents: number): number | 
 /**
  * The restaurant's own extra charge on top of the DoorDash fee
  * (admin settings delivery_markup_flat_cents + delivery_markup_percent).
- * Always disclosed to the customer as its own "Delivery service fee"
- * line — never merged into the DoorDash fee.
+ * Since the Service Fee update (2026-11-18, spec Part C) the customer
+ * sees ONE merged "Delivery fee" line (quote fee + this markup, via
+ * customerDeliveryCents in lib/feePricing.ts); the split stays stored
+ * on the order and visible in the admin panel only.
  */
 export function computeDeliveryMarkupCents(
   quoteFeeCents: number,

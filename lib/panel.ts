@@ -50,6 +50,10 @@ export interface PanelOrder {
   delivery_error?: string | null;
   delivery_status_at?: string | null;
   delivery_markup_cents?: number;
+  // Service Fee + Free Delivery — present once
+  // supabase/service-fee-promo-schema.sql has run.
+  service_fee_cents?: number;
+  free_delivery?: boolean;
   /** Joined from delivery_quotes (mode/fee/expiry) when available. */
   delivery_quote?: {
     provider_mode: string;

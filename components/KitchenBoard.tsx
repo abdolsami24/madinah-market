@@ -28,8 +28,11 @@ interface KitchenOrder {
   }[];
   subtotal_cents: number;
   discount_cents: number;
+  service_fee_cents?: number;
   tax_cents: number;
   delivery_fee_cents: number;
+  delivery_markup_cents?: number;
+  free_delivery?: boolean;
   tip_cents: number;
   total_cents: number;
   fulfillment: string;
@@ -82,6 +85,17 @@ function chime() {
 function printTicket(order: KitchenOrder) {
   const win = window.open("", "_blank", "width=400,height=600");
   if (!win) return;
+  // One merged delivery line (DoorDash fee + extra markup), FREE when
+  // the Free Delivery promotion applied — same lines as the customer.
+  const deliveryCharge = order.delivery_fee_cents + (order.delivery_markup_cents ?? 0);
+  const deliveryRow =
+    order.fulfillment !== "delivery"
+      ? ""
+      : order.free_delivery
+        ? `<div class="row"><span>Delivery fee</span><span>FREE</span></div>`
+        : deliveryCharge > 0
+          ? `<div class="row"><span>Delivery fee</span><span>${formatCents(deliveryCharge)}</span></div>`
+          : "";
   const items = (order.items_json ?? [])
     .map((l) => {
       const opts = (l.options ?? [])
@@ -107,8 +121,9 @@ function printTicket(order: KitchenOrder) {
     <hr/>${items}<hr/>
     <div class="row"><span>Subtotal</span><span>${formatCents(order.subtotal_cents)}</span></div>
     ${order.discount_cents > 0 ? `<div class="row"><span>Loyalty discount</span><span>-${formatCents(order.discount_cents)}</span></div>` : ""}
+    ${(order.service_fee_cents ?? 0) > 0 ? `<div class="row"><span>Service fee</span><span>${formatCents(order.service_fee_cents ?? 0)}</span></div>` : ""}
     <div class="row"><span>Tax</span><span>${formatCents(order.tax_cents)}</span></div>
-    ${order.delivery_fee_cents > 0 ? `<div class="row"><span>Delivery fee</span><span>${formatCents(order.delivery_fee_cents)}</span></div>` : ""}
+    ${deliveryRow}
     ${order.tip_cents > 0 ? `<div class="row"><span>Tip</span><span>${formatCents(order.tip_cents)}</span></div>` : ""}
     <div class="row grand"><span>TOTAL</span><span>${formatCents(order.total_cents)}</span></div>
     <script>window.onload=()=>{window.print();}</script>
@@ -299,7 +314,7 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
       <div className="kitchen-body">
         <form className="k-login" onSubmit={login}>
           <h1 style={{ color: "var(--gold-soft)", marginTop: 0 }}>🍳 Kitchen Login</h1>
-          <p>Madinah Bakery & Kabob staff only.</p>
+          <p>Madinah Market staff only.</p>
           <label>
             Email
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
@@ -332,7 +347,7 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
     <div className="kitchen-body">
       <div className="kitchen-wrap">
         <div className="kitchen-head">
-          <h1>🍳 Kitchen — Madinah Bakery & Kabob {testMode && <span style={{ color: "#fca5a5" }}>(TEST MODE)</span>}</h1>
+          <h1>🍳 Kitchen — Madinah Market {testMode && <span style={{ color: "#fca5a5" }}>(TEST MODE)</span>}</h1>
           <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
             {!alertsOn && (
               <button type="button" className="k-btn warn" onClick={turnOnAlerts}>
@@ -444,16 +459,28 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
                       <span>−{formatCents(o.discount_cents)}</span>
                     </div>
                   )}
+                  {(o.service_fee_cents ?? 0) > 0 && (
+                    <div className="row">
+                      <span>Service fee</span>
+                      <span>{formatCents(o.service_fee_cents ?? 0)}</span>
+                    </div>
+                  )}
                   <div className="row">
                     <span>Tax</span>
                     <span>{formatCents(o.tax_cents)}</span>
                   </div>
-                  {o.delivery_fee_cents > 0 && (
-                    <div className="row">
-                      <span>Delivery fee</span>
-                      <span>{formatCents(o.delivery_fee_cents)}</span>
-                    </div>
-                  )}
+                  {o.fulfillment === "delivery" &&
+                    (o.free_delivery ||
+                      o.delivery_fee_cents + (o.delivery_markup_cents ?? 0) > 0) && (
+                      <div className="row">
+                        <span>Delivery fee</span>
+                        <span>
+                          {o.free_delivery
+                            ? "FREE"
+                            : formatCents(o.delivery_fee_cents + (o.delivery_markup_cents ?? 0))}
+                        </span>
+                      </div>
+                    )}
                   {o.tip_cents > 0 && (
                     <div className="row">
                       <span>Tip</span>

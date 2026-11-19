@@ -23,6 +23,10 @@ export type OrderRow = NotifyOrder &
     delivery_quote_id?: string | null;
     delivery_error?: string | null;
     delivery_markup_cents?: number;
+    // Service Fee + Free Delivery — optional because the columns
+    // arrive with supabase/service-fee-promo-schema.sql.
+    service_fee_cents?: number;
+    free_delivery?: boolean;
   };
 
 export async function getOrder(orderId: number): Promise<OrderRow | null> {

@@ -34,11 +34,16 @@ import { getMenuItem } from "@/lib/menu";
 import { getDbMenu } from "@/lib/menuDb";
 import { logAudit } from "@/lib/audit";
 import { getDeliverySettings, setDeliverySettings } from "@/lib/delivery";
+import {
+  getFeeSettings,
+  setFreeDeliverySettings,
+  setServiceFeeSettings,
+} from "@/lib/fees";
 
 export const dynamic = "force-dynamic";
 
 async function staffState() {
-  const [settings, unavailable, promotions, photos, menu, hours, delivery] =
+  const [settings, unavailable, promotions, photos, menu, hours, delivery, fees] =
     await Promise.all([
       getSettings(),
       getUnavailableIds(),
@@ -47,6 +52,7 @@ async function staffState() {
       getDbMenu(),
       getHoursConfig(),
       getDeliverySettings(),
+      getFeeSettings(),
     ]);
   return {
     settings,
@@ -61,6 +67,12 @@ async function staffState() {
       min_subtotal_cents: delivery.min_subtotal_cents,
       markup_flat_cents: delivery.markup_flat_cents,
       markup_percent: delivery.markup_percent,
+    },
+    // Service Fee + Free Delivery settings (staff view only, same
+    // reasoning as the delivery settings above).
+    fees: {
+      service_fee: fees.service_fee,
+      free_delivery: fees.free_delivery,
     },
     menu: { categories: menu.categories, items: menu.items },
   };
@@ -178,7 +190,7 @@ export async function POST(req: Request) {
       }
       case "set_delivery_settings": {
         // Stage 3: DoorDash delivery radius cap, delivery minimum,
-        // and the extra "Delivery service fee" (flat + percent).
+        // and the extra delivery markup (flat + percent).
         const max_miles = Number(body.max_miles);
         const min_subtotal_cents = Math.floor(Number(body.min_subtotal_cents));
         const markup_flat_cents = Math.floor(Number(body.markup_flat_cents));
@@ -207,6 +219,38 @@ export async function POST(req: Request) {
           markup_flat_cents,
           markup_percent,
         });
+        break;
+      }
+      case "set_service_fee": {
+        // General Service Fee (Operations): on/off + percent-of-subtotal
+        // OR flat per order. Applies to every order; never taxed.
+        const enabled = body.enabled === true;
+        const type = body.type === "flat" ? "flat" : "percent";
+        const percent = Number(body.percent);
+        const flat_cents = Math.floor(Number(body.flat_cents));
+        if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+          throw new Error("Service-fee percent must be between 0 and 100.");
+        }
+        if (!Number.isFinite(flat_cents) || flat_cents < 0 || flat_cents > 100000) {
+          throw new Error("Enter a valid flat service fee (or 0 for off).");
+        }
+        await setServiceFeeSettings({ enabled, type, percent, flat_cents });
+        await logAudit(actor, "admin.set_service_fee", { enabled, type, percent, flat_cents });
+        break;
+      }
+      case "set_free_delivery": {
+        // Free Delivery promotion (Promotions section): on/off +
+        // the food-subtotal amount at/above which delivery is $0.
+        const enabled = body.enabled === true;
+        const threshold_cents = Math.floor(Number(body.threshold_cents));
+        if (!Number.isFinite(threshold_cents) || threshold_cents < 0 || threshold_cents > 1000000) {
+          throw new Error("Enter a valid free-delivery amount (in dollars).");
+        }
+        if (enabled && threshold_cents <= 0) {
+          throw new Error("Set the order amount for free delivery (e.g. $50).");
+        }
+        await setFreeDeliverySettings({ enabled, threshold_cents });
+        await logAudit(actor, "admin.set_free_delivery", { enabled, threshold_cents });
         break;
       }
       case "set_availability": {

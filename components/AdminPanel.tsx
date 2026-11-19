@@ -43,6 +43,15 @@ interface AdminState {
     markup_flat_cents: number;
     markup_percent: number;
   };
+  fees?: {
+    service_fee: {
+      enabled: boolean;
+      type: "percent" | "flat";
+      percent: number;
+      flat_cents: number;
+    };
+    free_delivery: { enabled: boolean; threshold_cents: number };
+  };
   menu: { categories: string[]; items: MenuItem[] };
 }
 
@@ -84,6 +93,8 @@ interface PanelOrder {
   delivery_error?: string | null;
   delivery_status_at?: string | null;
   delivery_markup_cents?: number;
+  service_fee_cents?: number;
+  free_delivery?: boolean;
   delivery_quote?: {
     provider_mode: string;
     fee_cents: number;
@@ -293,6 +304,24 @@ export default function AdminPanel() {
     setDlMinSubtotal(String(state.delivery.min_subtotal_cents / 100));
     setDlMarkupFlat(String(state.delivery.markup_flat_cents / 100));
     setDlMarkupPercent(String(state.delivery.markup_percent));
+  }, [state]);
+
+  // Service Fee + Free Delivery forms.
+  const [sfEnabled, setSfEnabled] = useState(false);
+  const [sfType, setSfType] = useState<"percent" | "flat">("percent");
+  const [sfPercent, setSfPercent] = useState("0");
+  const [sfFlat, setSfFlat] = useState("0");
+  const [fdEnabled, setFdEnabled] = useState(false);
+  const [fdThreshold, setFdThreshold] = useState("50");
+
+  useEffect(() => {
+    if (!state?.fees) return;
+    setSfEnabled(state.fees.service_fee.enabled);
+    setSfType(state.fees.service_fee.type);
+    setSfPercent(String(state.fees.service_fee.percent));
+    setSfFlat(String(state.fees.service_fee.flat_cents / 100));
+    setFdEnabled(state.fees.free_delivery.enabled);
+    setFdThreshold(String(state.fees.free_delivery.threshold_cents / 100));
   }, [state]);
 
   useEffect(() => {
@@ -833,9 +862,23 @@ export default function AdminPanel() {
                       </strong>
                       {(selectedOrder.delivery_markup_cents ?? 0) > 0 && (
                         <>
-                          <span>Delivery service fee</span>
+                          <span>Extra delivery fee (markup)</span>
                           <strong>
                             {formatCents(selectedOrder.delivery_markup_cents ?? 0)}
+                          </strong>
+                        </>
+                      )}
+                      {selectedOrder.free_delivery && (
+                        <>
+                          <span>Free delivery promotion</span>
+                          <strong>
+                            Applied — customer paid $0.00 for delivery; restaurant
+                            absorbed{" "}
+                            {formatCents(
+                              (selectedOrder.delivery_quote?.fee_cents ??
+                                selectedOrder.delivery_fee_cents) +
+                                (selectedOrder.delivery_markup_cents ?? 0)
+                            )}
                           </strong>
                         </>
                       )}
@@ -943,27 +986,44 @@ export default function AdminPanel() {
                       <span className="num">−{formatCents(selectedOrder.discount_cents)}</span>
                     </div>
                   )}
+                  {(selectedOrder.service_fee_cents ?? 0) > 0 && (
+                    <div className="row">
+                      <span>Service fee</span>
+                      <span className="num">
+                        {formatCents(selectedOrder.service_fee_cents ?? 0)}
+                      </span>
+                    </div>
+                  )}
                   <div className="row">
                     <span>Tax</span>
                     <span className="num">{formatCents(selectedOrder.tax_cents)}</span>
                   </div>
-                  {selectedOrder.delivery_fee_cents > 0 && (
+                  {selectedOrder.free_delivery ? (
                     <div className="row">
-                      <span>
-                        {selectedOrder.fulfillment === "delivery"
-                          ? "Delivery fee (DoorDash)"
-                          : "Delivery fee"}
-                      </span>
-                      <span className="num">{formatCents(selectedOrder.delivery_fee_cents)}</span>
+                      <span>Delivery fee — FREE (promotion)</span>
+                      <span className="num">{formatCents(0)}</span>
                     </div>
-                  )}
-                  {(selectedOrder.delivery_markup_cents ?? 0) > 0 && (
-                    <div className="row">
-                      <span>Delivery service fee</span>
-                      <span className="num">
-                        {formatCents(selectedOrder.delivery_markup_cents ?? 0)}
-                      </span>
-                    </div>
+                  ) : (
+                    <>
+                      {selectedOrder.delivery_fee_cents > 0 && (
+                        <div className="row">
+                          <span>
+                            {selectedOrder.fulfillment === "delivery"
+                              ? "Delivery fee (DoorDash)"
+                              : "Delivery fee"}
+                          </span>
+                          <span className="num">{formatCents(selectedOrder.delivery_fee_cents)}</span>
+                        </div>
+                      )}
+                      {(selectedOrder.delivery_markup_cents ?? 0) > 0 && (
+                        <div className="row">
+                          <span>Extra delivery fee (markup)</span>
+                          <span className="num">
+                            {formatCents(selectedOrder.delivery_markup_cents ?? 0)}
+                          </span>
+                        </div>
+                      )}
+                    </>
                   )}
                   {selectedOrder.tip_cents > 0 && (
                     <div className="row">
@@ -1436,6 +1496,88 @@ export default function AdminPanel() {
           </p>
         </section>
         <section className="ops-card">
+          <h3>Service fee</h3>
+          <div className="ops-field">
+            <label>
+              <input
+                type="checkbox"
+                checked={sfEnabled}
+                onChange={(e) => setSfEnabled(e.target.checked)}
+              />{" "}
+              Charge a service fee on every order (pickup and delivery)
+            </label>
+          </div>
+          <div className="ops-field">
+            <label>Fee type</label>
+            <div className="ops-btn-row">
+              <button
+                type="button"
+                className={`ops-btn${sfType === "percent" ? " primary" : ""}`}
+                onClick={() => setSfType("percent")}
+              >
+                Percent of food subtotal
+              </button>
+              <button
+                type="button"
+                className={`ops-btn${sfType === "flat" ? " primary" : ""}`}
+                onClick={() => setSfType("flat")}
+              >
+                Flat $ per order
+              </button>
+            </div>
+          </div>
+          {sfType === "percent" ? (
+            <div className="ops-field">
+              <label htmlFor="sf-percent">Service fee — % of the food subtotal</label>
+              <input
+                id="sf-percent"
+                type="number"
+                min="0"
+                max="100"
+                step="0.5"
+                value={sfPercent}
+                onChange={(e) => setSfPercent(e.target.value)}
+              />
+            </div>
+          ) : (
+            <div className="ops-field">
+              <label htmlFor="sf-flat">Service fee — flat $ per order</label>
+              <input
+                id="sf-flat"
+                type="number"
+                min="0"
+                step="0.25"
+                value={sfFlat}
+                onChange={(e) => setSfFlat(e.target.value)}
+              />
+            </div>
+          )}
+          <button
+            type="button"
+            className="ops-btn primary"
+            disabled={busy}
+            onClick={() =>
+              act(
+                {
+                  action: "set_service_fee",
+                  enabled: sfEnabled,
+                  type: sfType,
+                  percent: Math.min(100, Math.max(0, Number(sfPercent) || 0)),
+                  flat_cents: Math.max(0, Math.round(Number(sfFlat) * 100) || 0),
+                },
+                "Service fee settings saved — new orders now use them."
+              )
+            }
+          >
+            Save service fee
+          </button>
+          <p className="ops-muted">
+            The service fee appears as its own “Service fee” line next to the tax in
+            every total. It is not taxed, and the Free Delivery promotion never
+            removes it. It applies to new orders only.
+          </p>
+        </section>
+        <section className="ops-card">
           <h3>Delivery — DoorDash Drive</h3>
           <div className="ops-field">
             <label htmlFor="dl-max-miles">Delivery radius (miles, max 15)</label>
@@ -1503,10 +1645,58 @@ export default function AdminPanel() {
             Save delivery settings
           </button>
           <p className="ops-muted">
-            The extra service fee is always shown to the customer as its own
-            “Delivery service fee” line, separate from the DoorDash fee — never hidden
-            inside it. It applies to new quotes; orders already placed keep the fee
-            they were charged.
+            The customer sees ONE “Delivery fee” line: the DoorDash fee plus this
+            extra fee combined. The split stays visible in each order's details
+            here in the panel. It applies to new quotes; orders already placed
+            keep the fee they were charged.
+          </p>
+        </section>
+        <section className="ops-card">
+          <h3>Free delivery promotion</h3>
+          <div className="ops-field">
+            <label>
+              <input
+                type="checkbox"
+                checked={fdEnabled}
+                onChange={(e) => setFdEnabled(e.target.checked)}
+              />{" "}
+              Offer free delivery on bigger delivery orders
+            </label>
+          </div>
+          <div className="ops-field">
+            <label htmlFor="fd-threshold">Free delivery when the food total reaches ($)</label>
+            <input
+              id="fd-threshold"
+              type="number"
+              min="0"
+              step="1"
+              value={fdThreshold}
+              onChange={(e) => setFdThreshold(e.target.value)}
+            />
+          </div>
+          <button
+            type="button"
+            className="ops-btn primary"
+            disabled={busy}
+            onClick={() =>
+              act(
+                {
+                  action: "set_free_delivery",
+                  enabled: fdEnabled,
+                  threshold_cents: Math.max(0, Math.round(Number(fdThreshold) * 100) || 0),
+                },
+                "Free delivery promotion saved — new orders now use it."
+              )
+            }
+          >
+            Save free delivery
+          </button>
+          <p className="ops-muted">
+            Delivery orders at or above this food total pay $0 for delivery — the
+            checkout shows “FREE”. The courier is still dispatched and the
+            restaurant absorbs the DoorDash fee; each order's details here show
+            the absorbed amount. The service fee (if on) is still charged.
+            Pickup orders are not affected.
           </p>
         </section>
         <section className="ops-card">

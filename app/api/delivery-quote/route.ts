@@ -8,13 +8,22 @@
 // browser saw is never trusted.
 //
 // Response (ok): { quote_id, fee_cents, fee, service_fee_cents,
-//   service_fee, delivery_total_cents, expires_at, provider_mode,
+//   service_fee, delivery_total_cents, delivery_charge_cents,
+//   delivery_charge, free_delivery, expires_at, provider_mode,
 //   estimated_dropoff_at, miles }
+//   fee_cents / service_fee_cents keep their Stage 3 meaning (pure
+//   DoorDash fee / the restaurant's extra markup). delivery_total_cents
+//   is their sum; delivery_charge_cents is what the customer actually
+//   pays for delivery — the same merged sum, or 0 with free_delivery
+//   true when the Free Delivery promotion applies at the subtotal the
+//   browser sent. Checkout re-verifies all of it server-side.
 // Response (error): { error: "not_found" | "far" | "unavailable",
 //   message } — the UI shows the message and offers retry.
 
 import { NextResponse } from "next/server";
 import { createDeliveryQuote } from "@/lib/delivery";
+import { getFeeSettings } from "@/lib/fees";
+import { customerDeliveryCents, freeDeliveryApplies } from "@/lib/feePricing";
 import { formatCents } from "@/lib/menu";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +58,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: outcome.error, message: outcome.message });
   }
   const { quote, markup_cents } = outcome;
+  // Free Delivery promotion preview at the cart subtotal the browser
+  // sent (display only — checkout recomputes from the stored quote
+  // and the server-built subtotal before charging anything).
+  const feeSettings = await getFeeSettings();
+  const free_delivery = freeDeliveryApplies(subtotal_cents, feeSettings.free_delivery);
+  const delivery_charge_cents = customerDeliveryCents(
+    quote.fee_cents,
+    markup_cents,
+    free_delivery
+  );
   return NextResponse.json({
     quote_id: quote.id,
     fee_cents: quote.fee_cents,
@@ -56,6 +75,9 @@ export async function POST(req: Request) {
     service_fee_cents: markup_cents,
     service_fee: formatCents(markup_cents),
     delivery_total_cents: quote.fee_cents + markup_cents,
+    delivery_charge_cents,
+    delivery_charge: formatCents(delivery_charge_cents),
+    free_delivery,
     expires_at: quote.expires_at,
     provider_mode: quote.provider_mode,
     estimated_dropoff_at: outcome.estimated_dropoff_at,
