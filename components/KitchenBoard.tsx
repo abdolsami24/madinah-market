@@ -5,8 +5,9 @@
 // - Live feed: polls /api/kitchen/orders every 5 seconds with the staff
 //   access token; a Supabase Realtime subscription triggers instant
 //   refetches as a bonus (polling is the guaranteed path).
-// - New paid order => repeating voice alarm "New order! New order!" +
-//   flashing red banner until staff tap it to stop the alarm.
+// - New paid order => the card simply appears on the board and ONE
+//   single "ding" sound plays, once. No voice, no repeating alarm,
+//   no banner to tap (owner's request, 2026-11-18).
 // - ONE-TAP FLOW (owner's design, 2026-11-18): paid orders arrive
 //   already "Accepted" (auto-accept at payment — there are NO status
 //   step buttons). The chef taps the TOP of the card when the food is
@@ -59,34 +60,22 @@ function isActive(o: KitchenOrder): boolean {
   return o.kitchen_status !== "completed" && o.kitchen_status !== "cancelled";
 }
 
-function speak(text: string) {
-  try {
-    if (!("speechSynthesis" in window)) return false;
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.rate = 0.95;
-    window.speechSynthesis.speak(utter);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
+// One single "ding" — played exactly once when a new order arrives.
 function chime() {
   try {
     const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const ctx = new Ctx();
-    [880, 660, 880].forEach((freq, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.frequency.value = freq;
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      const start = ctx.currentTime + i * 0.22;
-      osc.start(start);
-      gain.gain.setValueAtTime(0.25, start);
-      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.2);
-      osc.stop(start + 0.22);
-    });
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 880;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    const start = ctx.currentTime;
+    osc.start(start);
+    gain.gain.setValueAtTime(0.3, start);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + 0.9);
+    osc.stop(start + 0.95);
   } catch {
     /* audio is best-effort */
   }
@@ -150,13 +139,10 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
   const [orders, setOrders] = useState<KitchenOrder[]>([]);
   const [alertsOn, setAlertsOn] = useState(false);
   const [autoPrint, setAutoPrint] = useState(false);
-  const [alarming, setAlarming] = useState(false);
   const seenPaidRef = useRef<Set<number>>(new Set());
-  // Paid orders that arrived after the board loaded and have not been
-  // acknowledged yet — they drive the alarm and the red "is-new" frame.
-  // (Acknowledging is local only: orders are already Accepted.)
+  // Paid orders that arrived after the board loaded — they drive the
+  // red "is-new" frame on the card until the order is completed.
   const freshRef = useRef<Set<number>>(new Set());
-  const alarmTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const firstLoadRef = useRef(true);
 
   // ---- auth ---------------------------------------------------------------
@@ -205,10 +191,9 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
       const data = (await res.json()) as { orders: KitchenOrder[] };
       const list = data.orders ?? [];
 
-      // Alarm + auto-print for newly seen PAID orders. Paid orders are
-      // auto-accepted, so "fresh" is about ARRIVAL, not a status: an
-      // order the board has never seen, still active, rings the alarm
-      // until the banner is tapped (acknowledged) or it is completed.
+      // New-arrival handling for newly seen PAID orders: auto-print
+      // (if enabled) + ONE single ding. The order card itself simply
+      // appears in the grid below — nothing to tap, nothing to stop.
       const fresh = list.filter((o) => isPaid(o) && !seenPaidRef.current.has(o.id));
       for (const o of list) {
         if (isPaid(o)) seenPaidRef.current.add(o.id);
@@ -218,16 +203,10 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
         for (const o of fresh) {
           if (isActive(o)) freshRef.current.add(o.id);
         }
-        if (alertsOn && fresh.some((o) => isActive(o))) setAlarming(true);
+        if (alertsOn && fresh.some((o) => isActive(o))) chime();
       }
       firstLoadRef.current = false;
       setOrders(list);
-
-      // Auto-stop: nothing fresh and unacknowledged left on the board.
-      const anyFreshActive = list.some(
-        (o) => freshRef.current.has(o.id) && isPaid(o) && isActive(o)
-      );
-      if (!anyFreshActive) setAlarming(false);
     } catch {
       /* next poll retries */
     }
@@ -252,25 +231,6 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
       if (supabase && channel) supabase.removeChannel(channel);
     };
   }, [session, fetchOrders]);
-
-  // ---- alarm loop -----------------------------------------------------------
-  useEffect(() => {
-    if (alarming) {
-      const ring = () => {
-        if (!speak("New order! New order!")) chime();
-      };
-      ring();
-      alarmTimer.current = setInterval(ring, 2600);
-    }
-    return () => {
-      if (alarmTimer.current) clearInterval(alarmTimer.current);
-      try {
-        window.speechSynthesis?.cancel();
-      } catch {
-        /* ignore */
-      }
-    };
-  }, [alarming]);
 
   async function setStatus(order: KitchenOrder, status: string) {
     if (!session) return;
@@ -299,18 +259,12 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
     await setStatus(order, "completed");
   }
 
-  // The alarm banner only ACKNOWLEDGES new arrivals (stops the sound
-  // and the red frame). Orders are already Accepted — no status change.
-  function ackAlarm() {
-    freshRef.current.clear();
-    setAlarming(false);
-  }
-
   function turnOnAlerts() {
     setAlertsOn(true);
     localStorage.setItem("madinah_alerts_on", "1");
-    // One spoken phrase inside the tap unlocks audio for later alarms.
-    speak("Order alerts are on.");
+    // Playing the ding inside this tap unlocks audio for later
+    // arrivals (browsers block sound before the first interaction).
+    chime();
   }
 
   // ---- render ---------------------------------------------------------------
@@ -386,14 +340,6 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
             </button>
           </div>
         </div>
-
-        <button
-          type="button"
-          className={`alarm-banner${alarming ? " on" : ""}`}
-          onClick={ackAlarm}
-        >
-          🔔 NEW ORDER! — tap to stop the alarm
-        </button>
 
         {visible.length === 0 && <p style={{ marginTop: "1.5rem" }}>No active orders.</p>}
 
