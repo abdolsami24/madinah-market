@@ -13,7 +13,10 @@
 //   step buttons). The chef taps the TOP of the card when the food is
 //   ready: one tap completes the order, it leaves the board, the
 //   pickup customer gets the ready SMS and the TV board shows READY.
-// - Print + Cancel live in the card footer, outside the tap area.
+// - Print lives in the card footer, outside the tap area. There is
+//   NO Cancel in the kitchen (owner's rule, 2026-11-18): once an
+//   order is Accepted it cannot be cancelled here — cancelling stays
+//   possible only for the owner in the admin panel.
 // - 80mm ticket printing, auto-print toggle.
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -348,7 +351,7 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
             return (
               <article className={`k-card${freshRef.current.has(o.id) ? " is-new" : ""}`} key={o.id}>
                 {/* ONE TAP: the whole header is the ready button. Print
-                    and Cancel live in the footer, outside this area. */}
+                    lives in the footer, outside this area. */}
                 <div
                   className="k-taphead"
                   role="button"
@@ -476,9 +479,6 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
                 <div className="k-actions">
                   <button type="button" className="secondary" onClick={() => printTicket(o)}>
                     🖨 Print ticket
-                  </button>
-                  <button type="button" className="danger" onClick={() => setStatus(o, "cancelled")}>
-                    Cancel order
                   </button>
                 </div>
               </article>
