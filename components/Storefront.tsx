@@ -36,9 +36,20 @@ import {
 type FeeState =
   | { kind: "idle" }
   | { kind: "loading" }
-  | { kind: "ok"; fee_cents: number; label: string }
-  | { kind: "far" }
-  | { kind: "not_found" };
+  | {
+      kind: "ok";
+      quote_id: string;
+      /** Pure DoorDash fee. */
+      fee_cents: number;
+      /** Restaurant's extra "Delivery service fee" (markup), if any. */
+      service_fee_cents: number;
+      label: string;
+      expires_at: string;
+    }
+  | { kind: "far"; message: string }
+  | { kind: "not_found" }
+  | { kind: "error"; message: string }
+  | { kind: "expired" };
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -92,6 +103,7 @@ export default function Storefront({
   const [address, setAddress] = useState("");
   const [note, setNote] = useState("");
   const [fee, setFee] = useState<FeeState>({ kind: "idle" });
+  const [quoteNonce, setQuoteNonce] = useState(0);
   const [tipPercent, setTipPercent] = useState(0);
   const [tipCustom, setTipCustom] = useState("");
   const [error, setError] = useState("");
@@ -326,7 +338,10 @@ export default function Storefront({
     tipCustom && Number.isFinite(tipCustomCents)
       ? Math.min(Math.max(tipCustomCents, 0), 20000)
       : Math.round((subtotal * Math.min(Math.max(tipPercent, 0), 30)) / 100);
-  const deliveryFee = fulfillment === "delivery" && fee.kind === "ok" ? fee.fee_cents : 0;
+  const deliveryFee =
+    fulfillment === "delivery" && fee.kind === "ok"
+      ? fee.fee_cents + fee.service_fee_cents
+      : 0;
   const total = subtotal - discountPreview + tax + deliveryFee + tip;
 
   // Add (or merge) a cart line: same dish + same options + same
@@ -386,7 +401,11 @@ export default function Storefront({
     [cart]
   );
 
-  // Debounced delivery-fee quote while the address is typed.
+  // Debounced DoorDash delivery quote while the address is typed
+  // (Stage 3: /api/delivery-quote stores the quote server-side; the
+  // quote id goes to checkout, which re-loads the fee from the store —
+  // the browser's numbers are never trusted). The tip is an input
+  // because tipping the driver lowers the DoorDash fee.
   useEffect(() => {
     if (fulfillment !== "delivery") return;
     if (feeTimer.current) clearTimeout(feeTimer.current);
@@ -399,24 +418,74 @@ export default function Storefront({
     const seq = ++feeSeq.current;
     feeTimer.current = setTimeout(async () => {
       try {
-        const res = await fetch("/api/delivery-fee", {
+        const res = await fetch("/api/delivery-quote", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ address: trimmed }),
+          body: JSON.stringify({
+            address: trimmed,
+            phone: phone.trim() || undefined,
+            tip_cents: tip,
+            subtotal_cents: subtotal,
+          }),
         });
         const data = await res.json();
         if (seq !== feeSeq.current) return; // a newer quote is in flight
-        if (data.error === "far") setFee({ kind: "far" });
-        else if (data.error) setFee({ kind: "not_found" });
-        else setFee({ kind: "ok", fee_cents: data.fee_cents, label: data.label });
+        if (data.error === "far") {
+          setFee({ kind: "far", message: String(data.message ?? "That address is outside our delivery area.") });
+        } else if (data.error === "not_found") {
+          setFee({ kind: "not_found" });
+        } else if (data.error) {
+          setFee({
+            kind: "error",
+            message: String(data.message ?? "We could not get a delivery quote right now."),
+          });
+        } else {
+          const eta = data.estimated_dropoff_at
+            ? `Arrives about ${new Date(data.estimated_dropoff_at).toLocaleTimeString([], {
+                hour: "numeric",
+                minute: "2-digit",
+              })}`
+            : "";
+          setFee({
+            kind: "ok",
+            quote_id: String(data.quote_id),
+            fee_cents: Number(data.fee_cents) || 0,
+            service_fee_cents: Number(data.service_fee_cents) || 0,
+            label: eta,
+            expires_at: String(data.expires_at),
+          });
+        }
       } catch {
-        if (seq === feeSeq.current) setFee({ kind: "not_found" });
+        if (seq === feeSeq.current) {
+          setFee({
+            kind: "error",
+            message: "We could not get a delivery quote right now. Please try again.",
+          });
+        }
       }
     }, 700);
     return () => {
       if (feeTimer.current) clearTimeout(feeTimer.current);
     };
-  }, [address, fulfillment]);
+  }, [address, fulfillment, phone, tip, quoteNonce]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Quote expiry: when the stored quote lapses, refresh it and show
+  // the (possibly changed) fee before the customer pays — a changed
+  // total is never charged silently.
+  useEffect(() => {
+    if (fee.kind !== "ok") return;
+    const ms = new Date(fee.expires_at).getTime() - Date.now();
+    const fire = () => {
+      setFee({ kind: "expired" });
+      setQuoteNonce((n) => n + 1);
+    };
+    if (ms <= 0) {
+      fire();
+      return;
+    }
+    const t = setTimeout(fire, ms);
+    return () => clearTimeout(t);
+  }, [fee]);
 
   const checkoutBlocked = fulfillment === "delivery" && fee.kind !== "ok";
 
@@ -479,6 +548,8 @@ export default function Storefront({
           customer_phone: phone.trim(),
           fulfillment,
           delivery_address: fulfillment === "delivery" ? address.trim() : undefined,
+          delivery_quote_id:
+            fulfillment === "delivery" && fee.kind === "ok" ? fee.quote_id : undefined,
           note: note.trim() || undefined,
           ...(tipCustom && Number.isFinite(tipCustomCents)
             ? { tip_custom_cents: tipCustomCents }
@@ -488,6 +559,14 @@ export default function Storefront({
         }),
       });
       const data = await res.json();
+      if (!res.ok && data.code === "quote_expired") {
+        // Refresh the quote so the customer sees and confirms the new
+        // total before paying — never charge a silently changed fee.
+        setQuoteNonce((n) => n + 1);
+        throw new Error(
+          "The delivery quote expired — we refreshed the fee. Please review the new total, then place the order again."
+        );
+      }
       if (!res.ok) throw new Error(data.error || "Checkout failed");
       if (data.url) {
         window.location.href = data.url as string;
@@ -960,16 +1039,30 @@ export default function Storefront({
                 {fee.kind === "loading" && <div className="fee-msg">Checking delivery fee…</div>}
                 {fee.kind === "ok" && (
                   <div className="fee-msg ok">
-                    ✅ Delivery fee {formatCents(fee.fee_cents)} — {fee.label}
+                    ✅ Delivery fee {formatCents(fee.fee_cents)} (DoorDash)
+                    {fee.service_fee_cents > 0 &&
+                      ` + ${formatCents(fee.service_fee_cents)} service fee`}
+                    {fee.label ? ` — ${fee.label}` : ""}
                   </div>
                 )}
-                {fee.kind === "far" && (
-                  <div className="fee-msg err">
-                    Sorry — that address is more than 4 miles away. Delivery is not available there; please choose pickup.
-                  </div>
-                )}
+                {fee.kind === "far" && <div className="fee-msg err">{fee.message}</div>}
                 {fee.kind === "not_found" && (
                   <div className="fee-msg err">We could not find that address — please check it.</div>
+                )}
+                {fee.kind === "expired" && (
+                  <div className="fee-msg">Your delivery quote expired — refreshing the fee…</div>
+                )}
+                {fee.kind === "error" && (
+                  <div className="fee-msg err">
+                    {fee.message}{" "}
+                    <button
+                      type="button"
+                      className="linklike"
+                      onClick={() => setQuoteNonce((n) => n + 1)}
+                    >
+                      Try again
+                    </button>
+                  </div>
                 )}
               </div>
             ) : (
@@ -1054,8 +1147,14 @@ export default function Storefront({
               </div>
               {fulfillment === "delivery" && (
                 <div className="row">
-                  <span>Delivery fee</span>
-                  <span>{fee.kind === "ok" ? formatCents(deliveryFee) : "—"}</span>
+                  <span>Delivery fee (DoorDash)</span>
+                  <span>{fee.kind === "ok" ? formatCents(fee.fee_cents) : "—"}</span>
+                </div>
+              )}
+              {fulfillment === "delivery" && fee.kind === "ok" && fee.service_fee_cents > 0 && (
+                <div className="row">
+                  <span>Delivery service fee</span>
+                  <span>{formatCents(fee.service_fee_cents)}</span>
                 </div>
               )}
               {tip > 0 && (

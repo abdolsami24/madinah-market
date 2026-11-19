@@ -15,6 +15,7 @@ import type { Session } from "@supabase/supabase-js";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { formatCents, type MenuItem } from "@/lib/menu";
 import { minutesToInputValue, type HoursConfig } from "@/lib/hours";
+import { deliveryStatusLabel } from "@/lib/deliveryStatus";
 
 // ---- shared types -----------------------------------------------------------
 
@@ -36,6 +37,12 @@ interface AdminState {
   promotions: Promotion[];
   photos: Record<string, string>;
   hours: HoursConfig;
+  delivery?: {
+    max_miles: number;
+    min_subtotal_cents: number;
+    markup_flat_cents: number;
+    markup_percent: number;
+  };
   menu: { categories: string[]; items: MenuItem[] };
 }
 
@@ -69,6 +76,19 @@ interface PanelOrder {
   kitchen_status: string;
   shipday_status: string | null;
   created_at: string;
+  // Stage 3 (DoorDash) — absent until supabase/stage3-schema.sql runs.
+  delivery_provider?: string | null;
+  delivery_external_id?: string | null;
+  delivery_status?: string | null;
+  delivery_quote_id?: string | null;
+  delivery_error?: string | null;
+  delivery_status_at?: string | null;
+  delivery_markup_cents?: number;
+  delivery_quote?: {
+    provider_mode: string;
+    fee_cents: number;
+    expires_at: string;
+  } | null;
 }
 
 interface OverviewData {
@@ -138,6 +158,11 @@ interface SecurityData {
   test_mode: boolean;
   board_test_mode: boolean;
   shipday_configured: boolean;
+  // Stage 3.
+  doordash_configured?: boolean;
+  doordash_mode?: string;
+  doordash_webhook_secret_configured?: boolean;
+  twilio_configured?: boolean;
 }
 
 type Section =
@@ -255,6 +280,20 @@ export default function AdminPanel() {
   const [hDeliveryMsClose, setHDeliveryMsClose] = useState("");
   const [hDeliverySunOpen, setHDeliverySunOpen] = useState("");
   const [hDeliverySunClose, setHDeliverySunClose] = useState("");
+
+  // Delivery settings form (Stage 3 — DoorDash).
+  const [dlMaxMiles, setDlMaxMiles] = useState("8");
+  const [dlMinSubtotal, setDlMinSubtotal] = useState("0");
+  const [dlMarkupFlat, setDlMarkupFlat] = useState("0");
+  const [dlMarkupPercent, setDlMarkupPercent] = useState("0");
+
+  useEffect(() => {
+    if (!state?.delivery) return;
+    setDlMaxMiles(String(state.delivery.max_miles));
+    setDlMinSubtotal(String(state.delivery.min_subtotal_cents / 100));
+    setDlMarkupFlat(String(state.delivery.markup_flat_cents / 100));
+    setDlMarkupPercent(String(state.delivery.markup_percent));
+  }, [state]);
 
   useEffect(() => {
     if (!state?.hours) return;
@@ -408,6 +447,30 @@ export default function AdminPanel() {
     } finally {
       setBusy(false);
     }
+  }
+
+  /** POST to /api/admin/delivery-retry (DoorDash retry / status refresh). */
+  async function deliveryAct(orderId: number, action: "retry" | "refresh", okText: string) {
+    if (!session?.access_token) return;
+    setBusy(true);
+    setMsg("");
+    try {
+      const res = await fetch("/api/admin/delivery-retry", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ order_id: orderId, action }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
+      setMsg(okText);
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Something went wrong.");
+    }
+    setBusy(false);
+    await loadOrders();
   }
 
   async function uploadPhoto(itemId: string, file: File) {
@@ -725,11 +788,117 @@ export default function AdminPanel() {
                   )}
                   {selectedOrder.shipday_status && (
                     <>
-                      <span>Shipday</span>
+                      <span>Shipday (legacy)</span>
                       <strong>{selectedOrder.shipday_status}</strong>
                     </>
                   )}
                 </div>
+                {selectedOrder.fulfillment === "delivery" && (
+                  <>
+                    <h3>
+                      Delivery — DoorDash Drive{" "}
+                      {selectedOrder.delivery_quote?.provider_mode === "mock" && (
+                        <span className="ops-chip">MOCK — simulated, not real DoorDash</span>
+                      )}
+                      {selectedOrder.delivery_quote?.provider_mode === "live" && (
+                        <span className="ops-chip">LIVE</span>
+                      )}
+                    </h3>
+                    <div className="ops-detail-grid">
+                      <span>Provider</span>
+                      <strong>
+                        {selectedOrder.delivery_provider === "doordash"
+                          ? "DoorDash Drive"
+                          : "Not dispatched yet"}
+                        {selectedOrder.delivery_quote
+                          ? ` (${selectedOrder.delivery_quote.provider_mode})`
+                          : ""}
+                      </strong>
+                      <span>Delivery ID</span>
+                      <strong className="ops-mono">
+                        {selectedOrder.delivery_external_id ?? "—"}
+                      </strong>
+                      <span>Delivery status</span>
+                      <strong>
+                        {selectedOrder.delivery_status
+                          ? `${deliveryStatusLabel(selectedOrder.delivery_status)} (${selectedOrder.delivery_status})`
+                          : "—"}
+                      </strong>
+                      <span>DoorDash fee</span>
+                      <strong>
+                        {formatCents(
+                          selectedOrder.delivery_quote?.fee_cents ??
+                            selectedOrder.delivery_fee_cents
+                        )}
+                      </strong>
+                      {(selectedOrder.delivery_markup_cents ?? 0) > 0 && (
+                        <>
+                          <span>Delivery service fee</span>
+                          <strong>
+                            {formatCents(selectedOrder.delivery_markup_cents ?? 0)}
+                          </strong>
+                        </>
+                      )}
+                      {selectedOrder.delivery_quote && (
+                        <>
+                          <span>Quote expires</span>
+                          <strong>{fmtTime(selectedOrder.delivery_quote.expires_at)}</strong>
+                        </>
+                      )}
+                      {selectedOrder.delivery_status_at && (
+                        <>
+                          <span>Status updated</span>
+                          <strong>{fmtTime(selectedOrder.delivery_status_at)}</strong>
+                        </>
+                      )}
+                      {selectedOrder.delivery_error && (
+                        <>
+                          <span>Delivery error</span>
+                          <strong className="ops-status-off">
+                            {selectedOrder.delivery_error}
+                          </strong>
+                        </>
+                      )}
+                    </div>
+                    <div className="ops-btn-row">
+                      {(selectedOrder.payment_status === "paid" ||
+                        selectedOrder.payment_status === "test_paid") &&
+                        (!selectedOrder.delivery_external_id ||
+                          selectedOrder.delivery_status === "pending") && (
+                          <button
+                            type="button"
+                            className="ops-btn primary"
+                            disabled={busy}
+                            onClick={() =>
+                              deliveryAct(
+                                selectedOrder.id,
+                                "retry",
+                                `Delivery for order #${selectedOrder.id} dispatched to DoorDash.`
+                              )
+                            }
+                          >
+                            Retry delivery dispatch
+                          </button>
+                        )}
+                      {selectedOrder.delivery_external_id && (
+                        <button
+                          type="button"
+                          className="ops-btn"
+                          disabled={busy}
+                          onClick={() =>
+                            deliveryAct(
+                              selectedOrder.id,
+                              "refresh",
+                              `Delivery status for order #${selectedOrder.id} refreshed.`
+                            )
+                          }
+                        >
+                          Refresh delivery status
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
                 <h3>Items</h3>
                 <div>
                   {(selectedOrder.items_json ?? []).map((line, i) => (
@@ -780,8 +949,20 @@ export default function AdminPanel() {
                   </div>
                   {selectedOrder.delivery_fee_cents > 0 && (
                     <div className="row">
-                      <span>Delivery fee</span>
+                      <span>
+                        {selectedOrder.fulfillment === "delivery"
+                          ? "Delivery fee (DoorDash)"
+                          : "Delivery fee"}
+                      </span>
                       <span className="num">{formatCents(selectedOrder.delivery_fee_cents)}</span>
+                    </div>
+                  )}
+                  {(selectedOrder.delivery_markup_cents ?? 0) > 0 && (
+                    <div className="row">
+                      <span>Delivery service fee</span>
+                      <span className="num">
+                        {formatCents(selectedOrder.delivery_markup_cents ?? 0)}
+                      </span>
                     </div>
                   )}
                   {selectedOrder.tip_cents > 0 && (
@@ -1255,6 +1436,80 @@ export default function AdminPanel() {
           </p>
         </section>
         <section className="ops-card">
+          <h3>Delivery — DoorDash Drive</h3>
+          <div className="ops-field">
+            <label htmlFor="dl-max-miles">Delivery radius (miles, max 15)</label>
+            <input
+              id="dl-max-miles"
+              type="number"
+              min="1"
+              max="15"
+              step="0.5"
+              value={dlMaxMiles}
+              onChange={(e) => setDlMaxMiles(e.target.value)}
+            />
+          </div>
+          <div className="ops-field">
+            <label htmlFor="dl-min-subtotal">Minimum food subtotal for delivery ($, 0 = off)</label>
+            <input
+              id="dl-min-subtotal"
+              type="number"
+              min="0"
+              step="1"
+              value={dlMinSubtotal}
+              onChange={(e) => setDlMinSubtotal(e.target.value)}
+            />
+          </div>
+          <div className="ops-field">
+            <label htmlFor="dl-markup-flat">Extra service fee — flat ($, 0 = off)</label>
+            <input
+              id="dl-markup-flat"
+              type="number"
+              min="0"
+              step="0.25"
+              value={dlMarkupFlat}
+              onChange={(e) => setDlMarkupFlat(e.target.value)}
+            />
+          </div>
+          <div className="ops-field">
+            <label htmlFor="dl-markup-percent">Extra service fee — % of the DoorDash fee (0 = off)</label>
+            <input
+              id="dl-markup-percent"
+              type="number"
+              min="0"
+              max="100"
+              step="1"
+              value={dlMarkupPercent}
+              onChange={(e) => setDlMarkupPercent(e.target.value)}
+            />
+          </div>
+          <button
+            type="button"
+            className="ops-btn primary"
+            disabled={busy}
+            onClick={() =>
+              act(
+                {
+                  action: "set_delivery_settings",
+                  max_miles: Number(dlMaxMiles),
+                  min_subtotal_cents: Math.max(0, Math.round(Number(dlMinSubtotal) * 100) || 0),
+                  markup_flat_cents: Math.max(0, Math.round(Number(dlMarkupFlat) * 100) || 0),
+                  markup_percent: Math.min(100, Math.max(0, Number(dlMarkupPercent) || 0)),
+                },
+                "Delivery settings saved — new quotes now use them."
+              )
+            }
+          >
+            Save delivery settings
+          </button>
+          <p className="ops-muted">
+            The extra service fee is always shown to the customer as its own
+            “Delivery service fee” line, separate from the DoorDash fee — never hidden
+            inside it. It applies to new quotes; orders already placed keep the fee
+            they were charged.
+          </p>
+        </section>
+        <section className="ops-card">
           <h3>Homepage promotions</h3>
           <div className="ops-field">
             <label htmlFor="pr-title">Title</label>
@@ -1585,9 +1840,29 @@ export default function AdminPanel() {
                   )}
                 </li>
                 <li>
-                  TV board test mode: {security.board_test_mode ? "ON" : "OFF"} · Shipday
-                  delivery: {security.shipday_configured ? "configured" : "not configured"} ·
+                  TV board test mode: {security.board_test_mode ? "ON" : "OFF"} ·
                   Database: {security.supabase_configured ? "configured" : "not configured"}
+                </li>
+                <li>
+                  DoorDash Drive delivery:{" "}
+                  {security.doordash_mode === "live" ? (
+                    <strong className="ops-status-on">
+                      LIVE — real DoorDash credentials are configured.
+                    </strong>
+                  ) : (
+                    <strong className="ops-status-off">
+                      MOCK — no DoorDash credentials yet. Quotes use DoorDash's published
+                      rate card and deliveries are simulated; the panel labels them MOCK.
+                    </strong>
+                  )}{" "}
+                  Webhook secret:{" "}
+                  {security.doordash_webhook_secret_configured ? "set" : "not set"}
+                </li>
+                <li>
+                  Twilio SMS:{" "}
+                  {security.twilio_configured
+                    ? "configured — customers get order texts."
+                    : "not configured — customer text messages are skipped."}
                 </li>
               </>
             ) : (
