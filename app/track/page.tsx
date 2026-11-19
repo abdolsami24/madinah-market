@@ -8,6 +8,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { formatCents } from "@/lib/menu";
+import {
+  deliveryStatusLabel,
+  deliveryStepIndex,
+  deliveryIsFailed,
+} from "@/lib/deliveryStatus";
 
 interface TrackedOrder {
   id: number;
@@ -21,6 +26,7 @@ interface TrackedOrder {
   subtotal_cents: number;
   tax_cents: number;
   delivery_fee_cents: number;
+  delivery_markup_cents?: number;
   tip_cents: number;
   total_cents: number;
   fulfillment: string;
@@ -28,6 +34,8 @@ interface TrackedOrder {
   payment_status: string;
   kitchen_status: string;
   shipday_status: string | null;
+  delivery_provider?: string | null;
+  delivery_status?: string | null;
   created_at: string;
 }
 
@@ -35,6 +43,10 @@ function stepIndex(order: TrackedOrder): number {
   // Index of the last completed step on the timeline.
   const ks = order.kitchen_status;
   if (order.fulfillment === "delivery") {
+    // Stage 3: the DoorDash delivery status drives the later steps
+    // when this order has one; older orders fall back to Shipday text.
+    const dd = deliveryStepIndex(order.delivery_status);
+    if (dd !== null) return dd;
     if (ks === "completed") return 3;
     const ship = (order.shipday_status ?? "").toLowerCase();
     if (ship.includes("deliver")) return 3;
@@ -168,21 +180,34 @@ export default function TrackPage() {
             {order.kitchen_status === "cancelled" ? (
               <p className="form-error">This order was cancelled. Please call us: 720-763-0786.</p>
             ) : (
-              <ul className="timeline">
-                {steps.map((label, i) => (
-                  <li key={label} className={i < current ? "done" : i === current ? "now" : ""}>
-                    <span className="dot">{i < current ? "✓" : i + 1}</span>
-                    <span>
-                      {label}
-                      {order.fulfillment === "delivery" && i === 2 && order.shipday_status && (
-                        <span style={{ display: "block", fontWeight: 400, fontSize: "0.9rem" }}>
-                          {order.shipday_status}
-                        </span>
-                      )}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <>
+                <ul className="timeline">
+                  {steps.map((label, i) => (
+                    <li key={label} className={i < current ? "done" : i === current ? "now" : ""}>
+                      <span className="dot">{i < current ? "✓" : i + 1}</span>
+                      <span>
+                        {label}
+                        {order.fulfillment === "delivery" && i === 2 && order.shipday_status && !order.delivery_status && (
+                          <span style={{ display: "block", fontWeight: 400, fontSize: "0.9rem" }}>
+                            {order.shipday_status}
+                          </span>
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {order.fulfillment === "delivery" && order.delivery_status && (
+                  <p style={{ marginTop: "0.5rem" }}>
+                    🚗 Delivery status:{" "}
+                    <strong>{deliveryStatusLabel(order.delivery_status)}</strong>
+                    {deliveryIsFailed(order.delivery_status) && (
+                      <span className="form-error" style={{ display: "block" }}>
+                        Something went wrong with this delivery — please call us: 720-763-0786.
+                      </span>
+                    )}
+                  </p>
+                )}
+              </>
             )}
             {(order.items ?? []).map((l, i) => (
               <div key={i}>
@@ -211,8 +236,18 @@ export default function TrackPage() {
               </div>
               {order.delivery_fee_cents > 0 && (
                 <div className="row">
-                  <span>Delivery fee</span>
+                  <span>
+                    {order.delivery_provider === "doordash"
+                      ? "Delivery fee (DoorDash)"
+                      : "Delivery fee"}
+                  </span>
                   <span>{formatCents(order.delivery_fee_cents)}</span>
+                </div>
+              )}
+              {(order.delivery_markup_cents ?? 0) > 0 && (
+                <div className="row">
+                  <span>Delivery service fee</span>
+                  <span>{formatCents(order.delivery_markup_cents ?? 0)}</span>
                 </div>
               )}
               {order.tip_cents > 0 && (

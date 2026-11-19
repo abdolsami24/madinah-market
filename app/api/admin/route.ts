@@ -33,24 +33,35 @@ import { HOURS_SETTING_KEYS, parseHHMM } from "@/lib/hours";
 import { getMenuItem } from "@/lib/menu";
 import { getDbMenu } from "@/lib/menuDb";
 import { logAudit } from "@/lib/audit";
+import { getDeliverySettings, setDeliverySettings } from "@/lib/delivery";
 
 export const dynamic = "force-dynamic";
 
 async function staffState() {
-  const [settings, unavailable, promotions, photos, menu, hours] = await Promise.all([
-    getSettings(),
-    getUnavailableIds(),
-    listPromotions(false),
-    getDishPhotos(),
-    getDbMenu(),
-    getHoursConfig(),
-  ]);
+  const [settings, unavailable, promotions, photos, menu, hours, delivery] =
+    await Promise.all([
+      getSettings(),
+      getUnavailableIds(),
+      listPromotions(false),
+      getDishPhotos(),
+      getDbMenu(),
+      getHoursConfig(),
+      getDeliverySettings(),
+    ]);
   return {
     settings,
     unavailable: [...unavailable],
     promotions,
     photos,
     hours,
+    // Stage 3 delivery settings (staff view only — the public GET
+    // shape below is unchanged).
+    delivery: {
+      max_miles: delivery.max_miles,
+      min_subtotal_cents: delivery.min_subtotal_cents,
+      markup_flat_cents: delivery.markup_flat_cents,
+      markup_percent: delivery.markup_percent,
+    },
     menu: { categories: menu.categories, items: menu.items },
   };
 }
@@ -163,6 +174,39 @@ export async function POST(req: Request) {
         }
         await setHoursConfig(values);
         await logAudit(actor, "admin.set_hours", { ...values });
+        break;
+      }
+      case "set_delivery_settings": {
+        // Stage 3: DoorDash delivery radius cap, delivery minimum,
+        // and the extra "Delivery service fee" (flat + percent).
+        const max_miles = Number(body.max_miles);
+        const min_subtotal_cents = Math.floor(Number(body.min_subtotal_cents));
+        const markup_flat_cents = Math.floor(Number(body.markup_flat_cents));
+        const markup_percent = Number(body.markup_percent);
+        if (!Number.isFinite(max_miles) || max_miles < 1 || max_miles > 15) {
+          throw new Error("Delivery radius must be between 1 and 15 miles.");
+        }
+        if (!Number.isFinite(min_subtotal_cents) || min_subtotal_cents < 0 || min_subtotal_cents > 100000) {
+          throw new Error("Enter a valid delivery minimum (or 0 for off).");
+        }
+        if (!Number.isFinite(markup_flat_cents) || markup_flat_cents < 0 || markup_flat_cents > 10000) {
+          throw new Error("Enter a valid flat service fee (or 0 for off).");
+        }
+        if (!Number.isFinite(markup_percent) || markup_percent < 0 || markup_percent > 100) {
+          throw new Error("Service-fee percent must be between 0 and 100.");
+        }
+        await setDeliverySettings({
+          max_miles,
+          min_subtotal_cents,
+          markup_flat_cents,
+          markup_percent,
+        });
+        await logAudit(actor, "admin.set_delivery_settings", {
+          max_miles,
+          min_subtotal_cents,
+          markup_flat_cents,
+          markup_percent,
+        });
         break;
       }
       case "set_availability": {

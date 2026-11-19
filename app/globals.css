@@ -714,6 +714,7 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
   box-shadow: 0 0 0 3px var(--brand-wash);
 }
 .fee-msg { font-size: 0.92rem; margin-top: 0.35rem; font-weight: 500; color: var(--ink-soft); }
+.linklike { background: none; border: none; padding: 0; font: inherit; color: inherit; text-decoration: underline; cursor: pointer; }
 .fee-msg.ok { color: var(--pistachio); font-weight: 600; }
 .fee-msg.err { color: var(--pomegranate); font-weight: 600; }
 

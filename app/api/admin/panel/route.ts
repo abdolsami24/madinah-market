@@ -29,6 +29,9 @@ import {
 } from "@/lib/panel";
 import { listAudit, logAudit } from "@/lib/audit";
 import { reversePointsForCancelledOrder } from "@/lib/points";
+import { smsPickupReady } from "@/lib/sms";
+import { doordashMode } from "@/lib/doordash";
+import { twilioConfigured } from "@/lib/sms";
 
 export const dynamic = "force-dynamic";
 
@@ -88,6 +91,11 @@ export async function GET(req: Request) {
           test_mode: !process.env.STRIPE_SECRET_KEY,
           board_test_mode: process.env.NEXT_PUBLIC_BOARD_TEST_MODE === "true",
           shipday_configured: Boolean(process.env.SHIPDAY_API_KEY),
+          // Stage 3: DoorDash Drive + Twilio status.
+          doordash_configured: doordashMode() === "live",
+          doordash_mode: doordashMode(),
+          doordash_webhook_secret_configured: Boolean(process.env.DOORDASH_WEBHOOK_SECRET),
+          twilio_configured: twilioConfigured(),
         });
       default:
         return NextResponse.json({ error: "Unknown section" }, { status: 400 });
@@ -165,6 +173,22 @@ export async function POST(req: Request) {
           .maybeSingle();
         if (error) throw error;
         if (!data) throw new Error("Order not found.");
+        // Same SMS rule as the kitchen board: a pickup order marked
+        // ready texts the customer (best-effort).
+        if (status === "ready") {
+          try {
+            const { data: full } = await supabase
+              .from("orders")
+              .select("id, customer_phone, fulfillment")
+              .eq("id", orderId)
+              .maybeSingle();
+            if (full && full.fulfillment === "pickup") {
+              await smsPickupReady(full);
+            }
+          } catch (err) {
+            console.error("[admin/panel] ready SMS failed:", err);
+          }
+        }
         // Same loyalty rule as the kitchen board: cancelling refunds the
         // redeemed points and reverses the earned ones (best-effort).
         if (status === "cancelled") {
