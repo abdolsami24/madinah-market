@@ -1,41 +1,42 @@
 /* Madinah Market — global styles (plain CSS, no framework).
    Storefront mirrors the Madinah design system (packages/contracts/design.ts):
-   warm cream canvas, deep "stage" green headers/hero, brand green actions,
-   saffron for rewards / bag / highlights. System font stack throughout.
+   warm off-white canvas, deep "stage" navy headers/hero, brand navy actions,
+   gold for rewards / bag / highlights. System font stack throughout.
+   (Palette: "Layout 1, Color 3 — Navy & Gold", picked by the owner 2026-11-18.)
    Kitchen: dark, high-contrast, very large touch targets.
    TV board: near-black, huge numbers. */
 
 :root {
   /* Design tokens (light scheme) */
-  --canvas: #f6f0e4;
+  --canvas: #f7f5ef;
   --surface: #fffcf5;
-  --sunken: #ece3d2;
+  --sunken: #eae6da;
   --ink: #1c1813;
   --ink-soft: #4a4238;
   --muted: #776d60;
   --hairline: rgba(28, 24, 19, 0.1);
-  --brand: #0e5a3f;
-  --brand-wash: #ddede3;
-  --stage: #0b3d2c;
-  --stage-dark: #07271b;
-  --on-stage: #f6f0e4;
-  --on-stage-dim: rgba(246, 240, 228, 0.75);
-  --saffron: #f2c230;
-  --saffron-text: #7a5800;
-  --saffron-wash: #fbefc6;
+  --brand: #173f6b;
+  --brand-wash: #e1e9f3;
+  --stage: #0f2b4c;
+  --stage-dark: #081e38;
+  --on-stage: #f7f5ef;
+  --on-stage-dim: rgba(247, 245, 239, 0.75);
+  --saffron: #c9a227;
+  --saffron-text: #7a6200;
+  --saffron-wash: #f6edd3;
   --pomegranate: #b0342a;
   --pomegranate-wash: #f8e2de;
   --pistachio: #2f7449;
   --pistachio-wash: #e0efe4;
-  --scrim: rgba(12, 18, 14, 0.52);
+  --scrim: rgba(8, 15, 26, 0.52);
   --shadow-card: 0 1px 3px rgba(28, 24, 19, 0.05), 0 10px 28px rgba(28, 24, 19, 0.05);
 
   /* Legacy aliases (kitchen / display / admin keep working) */
   --red: #8f1020;
   --red-dark: #6d0c18;
   --red-bright: #c1272d;
-  --gold: #d9a521;
-  --gold-soft: #f3d27a;
+  --gold: #c9a227;
+  --gold-soft: #e6cc76;
   --cream: #fff8ec;
   --line: var(--hairline);
   --ok: #2f7449;
@@ -58,7 +59,7 @@ h1, h2, h3 { letter-spacing: -0.02em; }
 
 /* ============================ HEADER ============================ */
 
-/* Thin info bar — part of the stage-green header family. */
+/* Thin info bar — part of the stage-navy header family. */
 .topbar {
   background: var(--stage-dark);
   color: var(--on-stage-dim);
@@ -136,7 +137,7 @@ h1, h2, h3 { letter-spacing: -0.02em; }
   font-size: 0.95rem;
 }
 .main-nav a:hover { background: rgba(255, 255, 255, 0.08); }
-.main-nav a.active { background: rgba(242, 194, 48, 0.16); color: var(--saffron); }
+.main-nav a.active { background: rgba(201, 162, 39, 0.16); color: var(--saffron); }
 .bag-btn {
   display: inline-flex;
   align-items: center;
@@ -244,7 +245,7 @@ h1, h2, h3 { letter-spacing: -0.02em; }
   border-radius: 16px;
   min-height: 56px;
   padding: 0.6rem 1.4rem;
-  border: 1px solid rgba(246, 240, 228, 0.35);
+  border: 1px solid rgba(247, 245, 239, 0.35);
 }
 .hero-cta {
   display: inline-block;
@@ -535,7 +536,7 @@ h1, h2, h3 { letter-spacing: -0.02em; }
   align-items: center;
   gap: 0.2rem;
 }
-.add-btn:hover { background: #cfe6d8; }
+.add-btn:hover { background: #d9e4f2; }
 .add-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 a.card.home-card { text-decoration: none; color: var(--ink); }
 .has-options { color: var(--brand); font-size: 0.85rem; font-weight: 600; margin: 0; }
@@ -656,7 +657,7 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
   justify-content: space-between;
   gap: 1rem;
   z-index: 40;
-  box-shadow: 0 6px 20px rgba(58, 44, 0, 0.28);
+  box-shadow: 0 6px 20px rgba(80, 64, 10, 0.28);
 }
 .cart-bar .total { font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .cart-bar button {
@@ -876,7 +877,7 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
   top: 0.6rem;
   right: 0.6rem;
   z-index: 2;
-  background: rgba(12, 18, 14, 0.55);
+  background: rgba(8, 15, 26, 0.55);
   color: #fff;
   border: none;
   width: 2.2rem;
@@ -1010,7 +1011,7 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
   user-select: none;
 }
 .k-taphead:hover { background: rgba(255, 255, 255, 0.09); }
-.k-taphead:active { background: rgba(242, 194, 48, 0.18); transform: scale(0.99); }
+.k-taphead:active { background: rgba(201, 162, 39, 0.2); transform: scale(0.99); }
 .k-taphead:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
 .k-hint {
   margin-top: 0.45rem;
@@ -1019,15 +1020,15 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
   color: var(--gold-soft);
   letter-spacing: 0.01em;
 }
-.k-status-accepted { color: #86efac; font-weight: 800; }
+.k-status-accepted { color: #a8ccee; font-weight: 800; }
 .k-badge {
   display: inline-block; border-radius: 999px; padding: 0.15rem 0.7rem;
   font-weight: 800; font-size: 0.85rem; margin-right: 0.4rem;
 }
 .k-badge.delivery { background: #7c2d12; color: #ffd9a8; }
-.k-badge.pickup { background: #14532d; color: #bbf7d0; }
+.k-badge.pickup { background: #173f6b; color: #d9e8f8; }
 .k-badge.unpaid { background: #57534e; color: #e7e5e4; }
-.k-badge.paid { background: #166534; color: #dcfce7; }
+.k-badge.paid { background: #0f2b4c; color: #cbdef5; }
 .k-items { margin: 0.6rem 0; padding-left: 1.1rem; }
 .k-money { border-top: 1px dashed #4a3826; padding-top: 0.5rem; }
 .k-money .row { display: flex; justify-content: space-between; }
@@ -1043,7 +1044,7 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
   background: var(--gold);
   color: #3a2403;
 }
-.k-actions button.secondary { background: #3a2c1e; color: #f3d27a; border: 2px solid var(--gold); }
+.k-actions button.secondary { background: #3a2c1e; color: #e6cc76; border: 2px solid var(--gold); }
 .k-actions button.danger { background: #451a1a; color: #fca5a5; border: 2px solid #7f1d1d; }
 .k-login { max-width: 420px; margin: 8vh auto; background: #221a13; padding: 1.6rem; border-radius: 14px; border: 2px solid #4a3826; }
 .k-login input { width: 100%; padding: 0.8rem; margin: 0.4rem 0 0.8rem; border-radius: 10px; border: 1.5px solid #4a3826; background: #14100c; color: #fdf6e9; }
@@ -1062,7 +1063,7 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
 .display-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 1.5rem; }
 .display-col h2 { font-size: 2rem; margin: 0 0 1rem; text-align: center; letter-spacing: 1px; }
 .display-col.preparing h2 { color: #facc15; }
-.display-col.ready h2 { color: #4ade80; }
+.display-col.ready h2 { color: #7fb3e8; }
 .display-nums { display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center; }
 .display-num {
   font-size: 4.2rem;
@@ -1074,10 +1075,10 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
   min-width: 170px;
   text-align: center;
 }
-.display-col.ready .display-num { border-color: #166534; color: #bbf7d0; }
+.display-col.ready .display-num { border-color: #2b5a8c; color: #d9e9fa; }
 .ready-flash {
   position: fixed; inset: 0;
-  background: #14532d;
+  background: #0f2b4c;
   color: #fff;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
@@ -1090,7 +1091,7 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
 
 /* ============================ OPERATIONS ADMIN (/admin) ============================
    Mirrors the reference Operations admin (apps/admin): a 248px sidebar
-   with a stage-green brand block and grouped nav, a list + editor
+   with a stage-navy brand block and grouped nav, a list + editor
    workspace, sunken form fields. Everything is scoped under .ops- so the
    storefront, kitchen and TV board styles are untouched. */
 
