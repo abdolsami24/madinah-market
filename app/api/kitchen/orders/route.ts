@@ -6,6 +6,7 @@
 
 import { NextResponse } from "next/server";
 import { getServiceClient, supabaseConfigured, verifyKitchenUser } from "@/lib/supabase/server";
+import { feedKitchenStatus } from "@/lib/kitchenStatus";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +31,14 @@ export async function GET(req: Request) {
     console.error("[kitchen/orders] query failed:", error);
     return NextResponse.json({ error: "Could not load orders." }, { status: 500 });
   }
-  // Hide Stripe's internal id from the board payload; staff never need it.
-  const orders = (data ?? []).map((o) => ({ ...o, stripe_session_id: undefined }));
+  // Hide Stripe's internal id from the board payload; staff never need
+  // it. One-tap flow: paid orders are presented as "accepted" whatever
+  // legacy in-progress status the row still holds (see lib/kitchenStatus)
+  // — the database row itself is not rewritten here.
+  const orders = (data ?? []).map((o) => ({
+    ...o,
+    stripe_session_id: undefined,
+    kitchen_status: feedKitchenStatus(o),
+  }));
   return NextResponse.json({ orders });
 }

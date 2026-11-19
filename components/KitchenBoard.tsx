@@ -6,8 +6,14 @@
 //   access token; a Supabase Realtime subscription triggers instant
 //   refetches as a bonus (polling is the guaranteed path).
 // - New paid order => repeating voice alarm "New order! New order!" +
-//   flashing red banner until staff tap it ("I see it — Accept").
-// - Status buttons, 80mm ticket printing, auto-print toggle.
+//   flashing red banner until staff tap it to stop the alarm.
+// - ONE-TAP FLOW (owner's design, 2026-11-18): paid orders arrive
+//   already "Accepted" (auto-accept at payment — there are NO status
+//   step buttons). The chef taps the TOP of the card when the food is
+//   ready: one tap completes the order, it leaves the board, the
+//   pickup customer gets the ready SMS and the TV board shows READY.
+// - Print + Cancel live in the card footer, outside the tap area.
+// - 80mm ticket printing, auto-print toggle.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getBrowserClient } from "@/lib/supabase/client";
@@ -45,9 +51,13 @@ interface KitchenOrder {
   created_at: string;
 }
 
-// One-tap flow (owner's request, 2026-11-16): no Accept / Preparing /
-// Ready steps. Staff tap ONE button when the food is ready; the order is
-// completed and leaves the board immediately.
+function isPaid(o: KitchenOrder): boolean {
+  return o.payment_status === "paid" || o.payment_status === "test_paid";
+}
+
+function isActive(o: KitchenOrder): boolean {
+  return o.kitchen_status !== "completed" && o.kitchen_status !== "cancelled";
+}
 
 function speak(text: string) {
   try {
@@ -142,7 +152,10 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
   const [autoPrint, setAutoPrint] = useState(false);
   const [alarming, setAlarming] = useState(false);
   const seenPaidRef = useRef<Set<number>>(new Set());
-  const ackedRef = useRef<Set<number>>(new Set());
+  // Paid orders that arrived after the board loaded and have not been
+  // acknowledged yet — they drive the alarm and the red "is-new" frame.
+  // (Acknowledging is local only: orders are already Accepted.)
+  const freshRef = useRef<Set<number>>(new Set());
   const alarmTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const firstLoadRef = useRef(true);
 
@@ -191,36 +204,30 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
       if (!res.ok) return;
       const data = (await res.json()) as { orders: KitchenOrder[] };
       const list = data.orders ?? [];
-      setOrders(list);
 
-      // Alarm + auto-print for newly seen PAID orders still in "new".
-      const fresh = list.filter(
-        (o) =>
-          (o.payment_status === "paid" || o.payment_status === "test_paid") &&
-          !seenPaidRef.current.has(o.id)
-      );
+      // Alarm + auto-print for newly seen PAID orders. Paid orders are
+      // auto-accepted, so "fresh" is about ARRIVAL, not a status: an
+      // order the board has never seen, still active, rings the alarm
+      // until the banner is tapped (acknowledged) or it is completed.
+      const fresh = list.filter((o) => isPaid(o) && !seenPaidRef.current.has(o.id));
       for (const o of list) {
-        if (o.payment_status === "paid" || o.payment_status === "test_paid") {
-          seenPaidRef.current.add(o.id);
-        }
+        if (isPaid(o)) seenPaidRef.current.add(o.id);
       }
       if (!firstLoadRef.current && fresh.length > 0) {
         if (autoPrint) fresh.forEach((o) => printTicket(o));
-        const needsAlarm = fresh.some(
-          (o) => o.kitchen_status === "new" && !ackedRef.current.has(o.id)
-        );
-        if (needsAlarm && alertsOn) setAlarming(true);
+        for (const o of fresh) {
+          if (isActive(o)) freshRef.current.add(o.id);
+        }
+        if (alertsOn && fresh.some((o) => isActive(o))) setAlarming(true);
       }
       firstLoadRef.current = false;
+      setOrders(list);
 
-      // Auto-stop: nothing unacknowledged in "new" anymore.
-      const anyUnackedNew = list.some(
-        (o) =>
-          (o.payment_status === "paid" || o.payment_status === "test_paid") &&
-          o.kitchen_status === "new" &&
-          !ackedRef.current.has(o.id)
+      // Auto-stop: nothing fresh and unacknowledged left on the board.
+      const anyFreshActive = list.some(
+        (o) => freshRef.current.has(o.id) && isPaid(o) && isActive(o)
       );
-      if (!anyUnackedNew) setAlarming(false);
+      if (!anyFreshActive) setAlarming(false);
     } catch {
       /* next poll retries */
     }
@@ -267,7 +274,6 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
 
   async function setStatus(order: KitchenOrder, status: string) {
     if (!session) return;
-    if (status === "accepted" || status === "completed") ackedRef.current.add(order.id);
     await fetch("/api/kitchen/status", {
       method: "POST",
       headers: {
@@ -279,18 +285,25 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
     fetchOrders();
   }
 
-  async function acceptAlarming() {
-    const targets = orders.filter(
-      (o) =>
-        (o.payment_status === "paid" || o.payment_status === "test_paid") &&
-        o.kitchen_status === "new" &&
-        !ackedRef.current.has(o.id)
+  // THE one tap: the chef taps the top of the card when the food is
+  // ready. The order is completed in a single action (the server fires
+  // the pickup-ready SMS and the TV board keeps it as READY for a
+  // while) and leaves the main board immediately — the local state is
+  // updated optimistically so the card moves to "Completed today" on
+  // the tap itself, then the refetch confirms it.
+  async function completeOrder(order: KitchenOrder) {
+    freshRef.current.delete(order.id);
+    setOrders((prev) =>
+      prev.map((o) => (o.id === order.id ? { ...o, kitchen_status: "completed" } : o))
     );
+    await setStatus(order, "completed");
+  }
+
+  // The alarm banner only ACKNOWLEDGES new arrivals (stops the sound
+  // and the red frame). Orders are already Accepted — no status change.
+  function ackAlarm() {
+    freshRef.current.clear();
     setAlarming(false);
-    for (const o of targets) {
-      ackedRef.current.add(o.id);
-      await setStatus(o, "accepted");
-    }
   }
 
   function turnOnAlerts() {
@@ -377,9 +390,9 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
         <button
           type="button"
           className={`alarm-banner${alarming ? " on" : ""}`}
-          onClick={acceptAlarming}
+          onClick={ackAlarm}
         >
-          🔔 NEW ORDER! — tap: I see it — Accept
+          🔔 NEW ORDER! — tap to stop the alarm
         </button>
 
         {visible.length === 0 && <p style={{ marginTop: "1.5rem" }}>No active orders.</p>}
@@ -387,39 +400,61 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
         <div className="k-grid">
           {visible.map((o) => {
             return (
-              <article className={`k-card${o.kitchen_status === "new" ? " is-new" : ""}`} key={o.id}>
-                <h2>
-                  #{o.id}{" "}
-                  <span className={`k-badge ${o.fulfillment === "delivery" ? "delivery" : "pickup"}`}>
-                    {o.fulfillment === "delivery" ? "🛵 DELIVERY" : "🏃 PICKUP"}
-                  </span>
-                  <span className={`k-badge ${o.payment_status === "unpaid" ? "unpaid" : "paid"}`}>
-                    {o.payment_status === "test_paid"
-                      ? "TEST PAID"
-                      : o.payment_status.toUpperCase()}
-                  </span>
-                </h2>
-                <div>
-                  {o.customer_name ?? ""} · {o.customer_phone ?? ""}
-                </div>
-                <div style={{ color: "#cbbfa8", fontSize: "0.95rem" }}>
-                  {new Date(o.created_at).toLocaleTimeString()} · status: {o.kitchen_status}
-                </div>
-                {o.scheduled_for && (
-                  <div
-                    style={{
-                      marginTop: "0.3rem",
-                      background: "#f59e0b",
-                      color: "#1a1207",
-                      fontWeight: 800,
-                      borderRadius: 8,
-                      padding: "0.25rem 0.6rem",
-                      display: "inline-block",
-                    }}
-                  >
-                    ⏰ PICKUP AT {formatDenverTime(o.scheduled_for)}
+              <article className={`k-card${freshRef.current.has(o.id) ? " is-new" : ""}`} key={o.id}>
+                {/* ONE TAP: the whole header is the ready button. Print
+                    and Cancel live in the footer, outside this area. */}
+                <div
+                  className="k-taphead"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Order #${o.id} — tap when the food is ready`}
+                  onClick={() => completeOrder(o)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      completeOrder(o);
+                    }
+                  }}
+                >
+                  <h2>
+                    #{o.id}{" "}
+                    <span className={`k-badge ${o.fulfillment === "delivery" ? "delivery" : "pickup"}`}>
+                      {o.fulfillment === "delivery" ? "🛵 DELIVERY" : "🏃 PICKUP"}
+                    </span>
+                    <span className={`k-badge ${o.payment_status === "unpaid" ? "unpaid" : "paid"}`}>
+                      {o.payment_status === "test_paid"
+                        ? "TEST PAID"
+                        : o.payment_status.toUpperCase()}
+                    </span>
+                  </h2>
+                  <div>
+                    {o.customer_name ?? ""} · {o.customer_phone ?? ""}
                   </div>
-                )}
+                  <div style={{ color: "#cbbfa8", fontSize: "0.95rem" }}>
+                    {new Date(o.created_at).toLocaleTimeString()} ·{" "}
+                    {isPaid(o) ? (
+                      <span className="k-status-accepted">✔ Accepted</span>
+                    ) : (
+                      <span>⏳ Awaiting payment</span>
+                    )}
+                  </div>
+                  {o.scheduled_for && (
+                    <div
+                      style={{
+                        marginTop: "0.3rem",
+                        background: "#f59e0b",
+                        color: "#1a1207",
+                        fontWeight: 800,
+                        borderRadius: 8,
+                        padding: "0.25rem 0.6rem",
+                        display: "inline-block",
+                      }}
+                    >
+                      ⏰ PICKUP AT {formatDenverTime(o.scheduled_for)}
+                    </div>
+                  )}
+                  <div className="k-hint">👆 Tap here when the food is ready</div>
+                </div>
                 {o.fulfillment === "delivery" && (
                   <div style={{ marginTop: "0.3rem" }}>
                     📍 {o.delivery_address ?? ""}
@@ -493,9 +528,6 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
                   </div>
                 </div>
                 <div className="k-actions">
-                  <button type="button" onClick={() => setStatus(o, "completed")}>
-                    ✔ READY — Done
-                  </button>
                   <button type="button" className="secondary" onClick={() => printTicket(o)}>
                     🖨 Print ticket
                   </button>

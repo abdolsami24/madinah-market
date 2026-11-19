@@ -997,6 +997,29 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
 }
 .k-card.is-new { border-color: var(--red-bright); }
 .k-card h2 { margin: 0 0 0.3rem; font-size: 1.6rem; }
+/* One-tap flow: the whole card header is the "food is ready" tap
+   target. Generous padding, obvious affordance, pressed feedback. */
+.k-taphead {
+  cursor: pointer;
+  border-radius: 10px;
+  padding: 0.55rem 0.6rem 0.65rem;
+  margin: -0.55rem -0.6rem 0.4rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1.5px dashed #6b543a;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.k-taphead:hover { background: rgba(255, 255, 255, 0.09); }
+.k-taphead:active { background: rgba(242, 194, 48, 0.18); transform: scale(0.99); }
+.k-taphead:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+.k-hint {
+  margin-top: 0.45rem;
+  font-weight: 800;
+  font-size: 0.95rem;
+  color: var(--gold-soft);
+  letter-spacing: 0.01em;
+}
+.k-status-accepted { color: #86efac; font-weight: 800; }
 .k-badge {
   display: inline-block; border-radius: 999px; padding: 0.15rem 0.7rem;
   font-weight: 800; font-size: 0.85rem; margin-right: 0.4rem;

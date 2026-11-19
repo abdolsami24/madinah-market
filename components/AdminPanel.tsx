@@ -16,6 +16,7 @@ import { getBrowserClient } from "@/lib/supabase/client";
 import { formatCents, type MenuItem } from "@/lib/menu";
 import { minutesToInputValue, type HoursConfig } from "@/lib/hours";
 import { deliveryStatusLabel } from "@/lib/deliveryStatus";
+import { adminStatusLabel } from "@/lib/kitchenStatus";
 
 // ---- shared types -----------------------------------------------------------
 
@@ -192,12 +193,10 @@ const NAV: { group: string; items: Section[] }[] = [
   { group: "Insight", items: ["Reports", "Staff", "Audit log", "Security"] },
 ];
 
-const STATUS_FLOW: Record<string, { next: string; label: string } | undefined> = {
-  new: { next: "accepted", label: "Accept order" },
-  accepted: { next: "preparing", label: "Start preparing" },
-  preparing: { next: "ready", label: "Mark ready" },
-  ready: { next: "completed", label: "Complete order" },
-};
+// One-tap flow (2026-11-18): there is NO status step chain in this
+// panel anymore. An order is "Accepted" from the moment it is paid
+// until the kitchen's one tap completes it — see adminStatusLabel in
+// lib/kitchenStatus, the single source of truth for the display label.
 
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleString([], {
@@ -644,7 +643,9 @@ export default function AdminPanel() {
 
   // ---- section renderers -------------------------------------------------------
 
-  const newOrderCount = overview?.today.by_status["new"] ?? 0;
+  // Sidebar badge: how many of today's orders are Accepted (paid and
+  // still with the kitchen) — the one-tap flow's "needs attention".
+  const newOrderCount = overview?.today.by_status["Accepted"] ?? 0;
 
   function renderOverview() {
     if (!overview) return <p className="ops-muted">Loading overview…</p>;
@@ -666,7 +667,7 @@ export default function AdminPanel() {
           {stat("Avg order all time", formatCents(overview.totals.avg_order_cents), "paid orders")}
         </div>
         <section className="ops-card">
-          <h3>Today by kitchen status</h3>
+          <h3>Today by status</h3>
           <div className="ops-chip-row">
             {Object.keys(overview.today.by_status).length === 0 && (
               <span className="ops-muted">No orders yet today.</span>
@@ -702,7 +703,7 @@ export default function AdminPanel() {
                     <td>{o.fulfillment}</td>
                     <td className="num">{formatCents(o.total_cents)}</td>
                     <td>{o.payment_status}</td>
-                    <td>{o.kitchen_status}</td>
+                    <td>{adminStatusLabel(o)}</td>
                   </tr>
                 ))}
                 {overview.recent.length === 0 && (
@@ -719,15 +720,14 @@ export default function AdminPanel() {
   }
 
   function renderOrders() {
-    const flow = selectedOrder ? STATUS_FLOW[selectedOrder.kitchen_status] : undefined;
     return (
       <>
         <div className="ops-filters">
-          <select value={oStatus} onChange={(e) => setOStatus(e.target.value)} aria-label="Kitchen status">
+          <select value={oStatus} onChange={(e) => setOStatus(e.target.value)} aria-label="Order status">
             <option value="all">All statuses</option>
-            {["new", "accepted", "preparing", "ready", "completed", "cancelled"].map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
+            <option value="accepted">Accepted</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
           </select>
           <select value={oPayment} onChange={(e) => setOPayment(e.target.value)} aria-label="Payment status">
             <option value="all">All payments</option>
@@ -775,7 +775,7 @@ export default function AdminPanel() {
                     {fmtTime(o.created_at)} · {o.fulfillment} · {formatCents(o.total_cents)}
                   </span>
                   <span>
-                    {o.payment_status} · {o.kitchen_status}
+                    {o.payment_status} · {adminStatusLabel(o)}
                   </span>
                 </button>
               ))}
@@ -791,7 +791,7 @@ export default function AdminPanel() {
               <div className="ops-editor">
                 <h2>
                   Order #{selectedOrder.id}
-                  <span className="ops-chip">{selectedOrder.kitchen_status}</span>
+                  <span className="ops-chip">{adminStatusLabel(selectedOrder)}</span>
                   <span className="ops-chip">{selectedOrder.payment_status}</span>
                 </h2>
                 <div className="ops-detail-grid">
@@ -1037,22 +1037,10 @@ export default function AdminPanel() {
                   </div>
                 </div>
                 <div className="ops-btn-row">
-                  {flow && (
-                    <button
-                      type="button"
-                      className="ops-btn primary"
-                      disabled={busy}
-                      onClick={async () => {
-                        await panelAct(
-                          { action: "set_order_status", order_id: selectedOrder.id, status: flow.next },
-                          `Order #${selectedOrder.id} is now ${flow.next}.`
-                        ).catch(() => {});
-                        await loadOrders();
-                      }}
-                    >
-                      {flow.label}
-                    </button>
-                  )}
+                  {/* One-tap flow: no status step buttons here. The
+                      order completes from the kitchen screen's one
+                      tap; this panel can only cancel (with the usual
+                      points reversal). */}
                   {selectedOrder.kitchen_status !== "cancelled" &&
                     selectedOrder.kitchen_status !== "completed" && (
                       <button

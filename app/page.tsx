@@ -196,8 +196,8 @@ export default async function HomePage() {
                 off. Sign in and your points add up on every paid order.
               </p>
             </div>
-            <Link href="/rewards" className="btn-accent">
-              See your rewards
+            <Link href="/account" className="btn-accent">
+              Join for free
             </Link>
           </div>
         </section>

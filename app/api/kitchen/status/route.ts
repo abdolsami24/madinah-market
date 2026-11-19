@@ -1,12 +1,20 @@
 // POST /api/kitchen/status  { order_id, status }
 // KITCHEN ONLY. Requires a valid Supabase Auth access token.
-// Moves an order through: new -> accepted -> preparing -> ready ->
-// completed (plus cancelled).
+//
+// One-tap flow (2026-11-18): the board only ever posts two statuses —
+// "completed" (the chef's single tap on the card header = food ready)
+// and "cancelled". Paid orders arrive already "accepted" (auto-accept
+// in markOrderPaid). The legacy step values stay ACCEPTED here so an
+// old client or a database row mid-migration can never wedge the
+// board, and the pickup-ready SMS rule (lib/kitchenStatus) fires the
+// text exactly once, on the first transition into ready/completed.
 
 import { NextResponse } from "next/server";
 import { getServiceClient, supabaseConfigured, verifyKitchenUser } from "@/lib/supabase/server";
 import { reversePointsForCancelledOrder } from "@/lib/points";
 import { smsPickupReady } from "@/lib/sms";
+import { shouldSendReadySms } from "@/lib/kitchenStatus";
+import { logAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +41,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Bad order_id or status." }, { status: 400 });
   }
   const supabase = getServiceClient();
+  // Read the current state first: the ready-SMS rule needs the PREVIOUS
+  // status to guarantee the text goes out exactly once.
+  const { data: prev } = await supabase
+    .from("orders")
+    .select("id, customer_phone, fulfillment, kitchen_status")
+    .eq("id", orderId)
+    .maybeSingle();
   const { error } = await supabase
     .from("orders")
     .update({ kitchen_status: status })
@@ -41,18 +56,15 @@ export async function POST(req: Request) {
     console.error("[kitchen/status] update failed:", error);
     return NextResponse.json({ error: "Could not update the order." }, { status: 500 });
   }
-  // SMS: a pickup order marked ready texts the customer (best-effort;
-  // no-op until Twilio is configured).
-  if (status === "ready") {
+  // SMS: the one-tap completion of a pickup order texts the customer
+  // "your order is READY" — exactly once per order (best-effort; no-op
+  // until Twilio is configured).
+  if (
+    prev &&
+    shouldSendReadySms(prev.kitchen_status, status, prev.fulfillment)
+  ) {
     try {
-      const { data: order } = await supabase
-        .from("orders")
-        .select("id, customer_phone, fulfillment")
-        .eq("id", orderId)
-        .maybeSingle();
-      if (order && order.fulfillment === "pickup") {
-        await smsPickupReady(order);
-      }
+      await smsPickupReady(prev);
     } catch (err) {
       console.error("[kitchen/status] ready SMS failed:", err);
     }
@@ -66,5 +78,11 @@ export async function POST(req: Request) {
       console.error("[kitchen/status] points reversal failed:", err);
     }
   }
+  // Same audit trail as the admin panel's status changes (best-effort).
+  await logAudit(user.email ?? user.id, "order.set_status", {
+    order_id: orderId,
+    status,
+    via: "kitchen",
+  });
   return NextResponse.json({ ok: true });
 }

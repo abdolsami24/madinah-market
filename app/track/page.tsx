@@ -42,7 +42,11 @@ interface TrackedOrder {
 }
 
 function stepIndex(order: TrackedOrder): number {
-  // Index of the last completed step on the timeline.
+  // Index of the last completed step on the timeline. One-tap kitchen
+  // flow (2026-11-18): the customer's steps are Order received ->
+  // Accepted (paid, auto-accepted — legacy 'preparing' rows land here
+  // too) -> Ready (the chef's one tap; stored as 'completed') ->
+  // Picked up / Delivered. There is no separate "Preparing" step.
   const ks = order.kitchen_status;
   if (order.fulfillment === "delivery") {
     // Stage 3: the DoorDash delivery status drives the later steps
@@ -125,8 +129,8 @@ export default function TrackPage() {
 
   const steps =
     order?.fulfillment === "delivery"
-      ? ["Order received", "Preparing", "Driver on the way", "Delivered"]
-      : ["Order received", "Preparing", "Ready", "Picked up"];
+      ? ["Order received", "Accepted", "Driver on the way", "Delivered"]
+      : ["Order received", "Accepted", "Ready", "Picked up"];
   const current = order ? stepIndex(order) : -1;
 
   return (

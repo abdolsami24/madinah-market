@@ -30,6 +30,7 @@ import {
 import { listAudit, logAudit } from "@/lib/audit";
 import { reversePointsForCancelledOrder } from "@/lib/points";
 import { smsPickupReady } from "@/lib/sms";
+import { shouldSendReadySms } from "@/lib/kitchenStatus";
 import { doordashMode } from "@/lib/doordash";
 import { twilioConfigured } from "@/lib/sms";
 
@@ -165,6 +166,13 @@ export async function POST(req: Request) {
           throw new Error("Bad order_id or status.");
         }
         const supabase = getServiceClient();
+        // Previous state first: the shared ready-SMS rule needs it to
+        // fire the pickup-ready text exactly once per order.
+        const { data: prev } = await supabase
+          .from("orders")
+          .select("id, customer_phone, fulfillment, kitchen_status")
+          .eq("id", orderId)
+          .maybeSingle();
         const { data, error } = await supabase
           .from("orders")
           .update({ kitchen_status: status })
@@ -173,18 +181,17 @@ export async function POST(req: Request) {
           .maybeSingle();
         if (error) throw error;
         if (!data) throw new Error("Order not found.");
-        // Same SMS rule as the kitchen board: a pickup order marked
-        // ready texts the customer (best-effort).
-        if (status === "ready") {
+        // Same SMS rule as the kitchen board (one-tap flow): the first
+        // transition into ready/completed texts a pickup customer
+        // (best-effort). The panel UI now only posts "cancelled" and
+        // the kitchen tap posts "completed", but the rule covers the
+        // legacy step values too.
+        if (
+          prev &&
+          shouldSendReadySms(prev.kitchen_status, status, prev.fulfillment)
+        ) {
           try {
-            const { data: full } = await supabase
-              .from("orders")
-              .select("id, customer_phone, fulfillment")
-              .eq("id", orderId)
-              .maybeSingle();
-            if (full && full.fulfillment === "pickup") {
-              await smsPickupReady(full);
-            }
+            await smsPickupReady(prev);
           } catch (err) {
             console.error("[admin/panel] ready SMS failed:", err);
           }

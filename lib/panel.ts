@@ -7,6 +7,7 @@
 
 import { getServiceClient } from "./supabase/server";
 import { denverParts } from "./hours";
+import { adminStatusLabel, statusFilterStatuses } from "./kitchenStatus";
 import { getDbMenu } from "./menuDb";
 import { getDishPhotos, getUnavailableIds } from "./admin";
 import type { OrderLine } from "./pricing";
@@ -121,9 +122,13 @@ export async function getOverview(): Promise<OverviewData> {
     if (recentRes.error || allRes.error) return empty;
     const window = ((recentRes.data as Record<string, unknown>[]) ?? []).map(toPanelOrder);
     const todays = window.filter((o) => denverDay(o.created_at) === todayYmd);
+    // One-tap flow: today's orders are counted by their DISPLAY status
+    // (Accepted / Completed / Cancelled / New), so legacy in-progress
+    // rows fold into "Accepted" instead of splintering the overview.
     const byStatus: Record<string, number> = {};
     for (const o of todays) {
-      byStatus[o.kitchen_status] = (byStatus[o.kitchen_status] ?? 0) + 1;
+      const label = adminStatusLabel(o);
+      byStatus[label] = (byStatus[label] ?? 0) + 1;
     }
     const todayPaid = todays.filter(isPaid);
     const todayRevenue = todayPaid.reduce((s, o) => s + o.total_cents, 0);
@@ -174,7 +179,13 @@ export async function listPanelOrders(filters: OrderFilters): Promise<PanelOrder
       .order("created_at", { ascending: false })
       .limit(Math.min(Math.max(filters.limit ?? 200, 1), 500));
     if (filters.status && filters.status !== "all") {
-      query = query.eq("kitchen_status", filters.status);
+      // One-tap flow filters: "accepted" matches every legacy
+      // in-progress status; anything unrecognised falls back to an
+      // exact match so the API stays tolerant of old callers.
+      const mapped = statusFilterStatuses(filters.status);
+      query = mapped
+        ? query.in("kitchen_status", mapped)
+        : query.eq("kitchen_status", filters.status);
     }
     if (filters.payment && filters.payment !== "all") {
       query = query.eq("payment_status", filters.payment);

@@ -66,6 +66,26 @@ export async function markOrderPaid(
   if (error) throw error;
   const updated = (data as OrderRow) ?? { ...order, payment_status: status };
 
+  // AUTO-ACCEPT (one-tap kitchen flow, 2026-11-18): a paid order is
+  // "Accepted" the moment payment lands — no staff action. Only a
+  // still-'new' order is flipped, and because this whole block runs
+  // only on the unpaid -> paid transition above, it happens exactly
+  // once per order. Best-effort: the kitchen feed also presents any
+  // paid in-progress order as Accepted, so a failure here can never
+  // strand an order in the old flow.
+  try {
+    const { data: ks } = await supabase
+      .from("orders")
+      .update({ kitchen_status: "accepted" })
+      .eq("id", orderId)
+      .eq("kitchen_status", "new")
+      .select("id")
+      .maybeSingle();
+    if (ks) updated.kitchen_status = "accepted";
+  } catch (err) {
+    console.error("[orders] auto-accept failed:", err);
+  }
+
   // Loyalty: award points to the signed-in customer (best-effort,
   // idempotent — re-running the webhook never double-awards).
   try {
