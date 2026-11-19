@@ -6,7 +6,14 @@
 // and the two-step checkout. The server recomputes every total — the
 // numbers here are only for display.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import Link from "next/link";
 import { formatCents, type MenuItem, type SelectedOption } from "@/lib/menu";
 import { getBrowserClient } from "@/lib/supabase/client";
@@ -110,6 +117,9 @@ export default function Storefront({
   const [activeCat, setActiveCat] = useState<string>("All");
   const [query, setQuery] = useState("");
   const [showCheckout, setShowCheckout] = useState(false);
+  // Two-step checkout (after the sign-in/guest gate): 1 = details form,
+  // 2 = review + the single "Place order — $total" button.
+  const [checkoutStep, setCheckoutStep] = useState<1 | 2>(1);
   const [fulfillment, setFulfillment] = useState<"pickup" | "delivery">("pickup");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -168,6 +178,12 @@ export default function Storefront({
   useEffect(() => {
     if (cartLoaded) saveCart(cart);
   }, [cart, cartLoaded]);
+
+  // A fresh checkout always starts on step 1 (details) — never on the
+  // review step of a previous, closed checkout.
+  useEffect(() => {
+    if (!showCheckout) setCheckoutStep(1);
+  }, [showCheckout]);
 
   // Admin-controlled site state: switches, sold-out dishes, promotions,
   // uploaded dish photos. Loaded once; the site fails open (all ordering
@@ -419,6 +435,110 @@ export default function Storefront({
     [cart]
   );
 
+  // Fly-to-bag animation (Sami's pick — option B): a clone of the dish
+  // photo flies from the card / options popup to the floating bag bar,
+  // which then pulses once. Purely visual and fully guarded — the cart
+  // state updates exactly as before, and any failure here is ignored.
+  const flyToBag = useCallback(
+    (sourceImg: HTMLImageElement | null, src: string) => {
+      try {
+        if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches)
+          return;
+        const start = sourceImg?.getBoundingClientRect();
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const sx = start ? start.left + start.width / 2 : vw / 2;
+        const sy = start ? start.top + start.height / 2 : vh / 2;
+        const size = start ? Math.max(48, Math.min(start.width, 200)) : 120;
+        // The bag bar exists only once the cart is non-empty, so wait
+        // two frames for it to render before measuring it. If it is
+        // still missing, aim at where it sits (bottom centre).
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            try {
+              const bar = document.querySelector<HTMLElement>(".cart-bar");
+              const rect = bar?.getBoundingClientRect();
+              const ex = rect ? rect.left + rect.width / 2 : vw / 2;
+              const ey = rect ? rect.top + rect.height / 2 : vh - 44;
+              const clone = document.createElement("img");
+              clone.src = src;
+              clone.alt = "";
+              clone.setAttribute("aria-hidden", "true");
+              Object.assign(clone.style, {
+                position: "fixed",
+                left: `${sx - size / 2}px`,
+                top: `${sy - size / 2}px`,
+                width: `${size}px`,
+                height: `${size}px`,
+                objectFit: "cover",
+                borderRadius: "18px",
+                zIndex: "999",
+                pointerEvents: "none",
+                margin: "0",
+                boxShadow: "0 12px 32px rgba(0,0,0,0.35)",
+              });
+              document.body.appendChild(clone);
+              const dx = ex - sx;
+              const dy = ey - sy;
+              const anim = clone.animate(
+                [
+                  { transform: "translate(0px, 0px) scale(1)", opacity: "1" },
+                  {
+                    transform: `translate(${dx * 0.72}px, ${
+                      dy * 0.72 - 56
+                    }px) scale(0.32)`,
+                    opacity: "0.9",
+                    offset: 0.72,
+                  },
+                  {
+                    transform: `translate(${dx}px, ${dy}px) scale(0.05)`,
+                    opacity: "0.2",
+                  },
+                ],
+                { duration: 650, easing: "cubic-bezier(.45,.02,.35,1)" }
+              );
+              anim.onfinish = () => {
+                clone.remove();
+                try {
+                  bar?.animate(
+                    [
+                      { transform: "translateX(-50%) scale(1)" },
+                      { transform: "translateX(-50%) scale(1.07)", offset: 0.4 },
+                      { transform: "translateX(-50%) scale(1)" },
+                    ],
+                    { duration: 320, easing: "ease-out" }
+                  );
+                } catch {
+                  /* the pulse is decorative only */
+                }
+              };
+              anim.oncancel = () => clone.remove();
+              setTimeout(() => clone.remove(), 1600);
+            } catch {
+              /* the animation must never break adding to the cart */
+            }
+          });
+        });
+      } catch {
+        /* the animation must never break adding to the cart */
+      }
+    },
+    []
+  );
+
+  // Dish-card "+ Add" / stepper "+": update the cart exactly as before
+  // and fly the card's photo to the bag bar.
+  const handleQuickAdd = (
+    e: ReactMouseEvent<HTMLElement>,
+    item: MenuItem,
+    qty: number
+  ) => {
+    const card = (e.currentTarget as HTMLElement).closest("article");
+    const img = card?.querySelector("img") as HTMLImageElement | null;
+    setPlainQty(item, qty);
+    flyToBag(img, dishPhotos[item.id] ?? item.image);
+  };
+
   // Debounced DoorDash delivery quote while the address is typed
   // (Stage 3: /api/delivery-quote stores the quote server-side; the
   // quote id goes to checkout, which re-loads the fee from the store —
@@ -517,6 +637,37 @@ export default function Storefront({
   const formOpen = !!accountEmail || guestChosen;
   const fullName = `${firstName} ${lastName}`.trim();
 
+  // Step 1 → Step 2 (Review): the same client-side checks placeOrder
+  // runs before submitting (the server still validates everything
+  // again at placement). All form input stays untouched, so "← Back"
+  // from the review step returns to a fully preserved form.
+  function goToReview() {
+    setError("");
+    if (lines.length === 0) return setError("Your cart is empty.");
+    if (fullName.length < 2) return setError("Please enter your name.");
+    if (phone.replace(/\D/g, "").length < 7)
+      return setError("Please enter your phone number.");
+    if (fulfillment === "delivery" && fee.kind !== "ok") {
+      return setError(
+        "Please enter a delivery address inside our delivery area first."
+      );
+    }
+    if (fulfillment === "pickup" && pickupWhen === "later") {
+      const iso = pickupTime ? denverTimeTodayToISO(pickupTime) : null;
+      if (!iso) return setError("Please choose a pickup time.");
+      const problem = validatePickupTime(iso, new Date(), hoursCfg);
+      if (problem) return setError(problem);
+    }
+    setCheckoutStep(2);
+    setTimeout(
+      () =>
+        document
+          .getElementById("checkout")
+          ?.scrollIntoView({ behavior: "smooth" }),
+      50
+    );
+  }
+
   async function placeOrder() {
     setError("");
     if (lines.length === 0) return setError("Your cart is empty.");
@@ -584,7 +735,9 @@ export default function Storefront({
       if (!res.ok && data.code === "quote_expired") {
         // Refresh the quote so the customer sees and confirms the new
         // total before paying — never charge a silently changed fee.
+        // Back to step 1, where the refreshed fee and this message show.
         setQuoteNonce((n) => n + 1);
+        setCheckoutStep(1);
         throw new Error(
           "The delivery quote expired — we refreshed the fee. Please review the new total, then place the order again."
         );
@@ -675,7 +828,7 @@ export default function Storefront({
                 Closed
               </button>
             ) : qty === 0 ? (
-              <button type="button" className="add-btn" onClick={() => setPlainQty(m, 1)}>
+              <button type="button" className="add-btn" onClick={(e) => handleQuickAdd(e, m, 1)}>
                 + Add
               </button>
             ) : (
@@ -684,7 +837,7 @@ export default function Storefront({
                   −
                 </button>
                 <span className="count">{qty}</span>
-                <button type="button" onClick={() => setPlainQty(m, qty + 1)} aria-label="Add one">
+                <button type="button" onClick={(e) => handleQuickAdd(e, m, qty + 1)} aria-label="Add one">
                   +
                 </button>
               </span>
@@ -694,6 +847,106 @@ export default function Storefront({
       </article>
     );
   }
+
+  // Cart lines for the checkout panel. Step 1 (details) keeps the
+  // quantity steppers + Remove; step 2 (review) shows the same lines
+  // read-only, with their options and per-line totals.
+  const renderLines = (editable: boolean) =>
+    lines.map((l) => (
+      <div className="cart-line-wrap" key={l.key}>
+        <div className="cart-line">
+          <span>
+            {l.qty} × {l.item.name}
+          </span>
+          <span>{formatCents(l.line_total_cents)}</span>
+        </div>
+        {l.cartLine.options.length > 0 && (
+          <div className="line-options">
+            {l.cartLine.options.map((o) => (
+              <span key={`${o.group}::${o.name}`}>
+                • {o.name}
+                {o.price_delta_cents > 0
+                  ? ` (+${formatCents(o.price_delta_cents)})`
+                  : ""}
+              </span>
+            ))}
+          </div>
+        )}
+        {l.cartLine.instructions && (
+          <div className="line-note">“{l.cartLine.instructions}”</div>
+        )}
+        {editable && (
+          <div className="line-controls">
+            <span className="qty-controls small">
+              <button type="button" onClick={() => setLineQty(l.key, l.qty - 1)} aria-label="One less">
+                −
+              </button>
+              <span className="count">{l.qty}</span>
+              <button type="button" onClick={() => setLineQty(l.key, l.qty + 1)} aria-label="One more">
+                +
+              </button>
+            </span>
+            <button
+              type="button"
+              className="auth-link"
+              onClick={() => setLineQty(l.key, 0)}
+            >
+              Remove
+            </button>
+          </div>
+        )}
+      </div>
+    ));
+
+  // Totals block — the exact same rows, in the established order, on
+  // both checkout steps (display only; the server recomputes at
+  // placement). The Delivery fee is the ONE merged customer line.
+  const breakdownJsx = (
+    <div className="breakdown">
+      <div className="row">
+        <span>Subtotal</span>
+        <span>{formatCents(subtotal)}</span>
+      </div>
+      {discountPreview > 0 && (
+        <div className="row">
+          <span>⭐ Loyalty discount ({redeemBlocks * 100} pts)</span>
+          <span>−{formatCents(discountPreview)}</span>
+        </div>
+      )}
+      {serviceFeePreview > 0 && (
+        <div className="row">
+          <span>Service fee</span>
+          <span>{formatCents(serviceFeePreview)}</span>
+        </div>
+      )}
+      <div className="row">
+        <span>Sales tax (8%)</span>
+        <span>{formatCents(tax)}</span>
+      </div>
+      {fulfillment === "delivery" && (
+        <div className="row">
+          <span>Delivery fee</span>
+          <span>
+            {fee.kind === "ok"
+              ? fee.free_delivery
+                ? "FREE 🎉"
+                : formatCents(fee.delivery_charge_cents)
+              : "—"}
+          </span>
+        </div>
+      )}
+      {tip > 0 && (
+        <div className="row">
+          <span>Tip</span>
+          <span>{formatCents(tip)}</span>
+        </div>
+      )}
+      <div className="row grand">
+        <span>TOTAL</span>
+        <span>{formatCents(total)}</span>
+      </div>
+    </div>
+  );
 
   return (
     <>
@@ -827,50 +1080,40 @@ export default function Storefront({
         {showCheckout && (
           <section className="panel" id="checkout">
             <h3>Your order</h3>
-            {lines.map((l) => (
-              <div className="cart-line-wrap" key={l.key}>
-                <div className="cart-line">
-                  <span>
-                    {l.qty} × {l.item.name}
-                  </span>
-                  <span>{formatCents(l.line_total_cents)}</span>
-                </div>
-                {l.cartLine.options.length > 0 && (
-                  <div className="line-options">
-                    {l.cartLine.options.map((o) => (
-                      <span key={`${o.group}::${o.name}`}>
-                        • {o.name}
-                        {o.price_delta_cents > 0
-                          ? ` (+${formatCents(o.price_delta_cents)})`
-                          : ""}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {l.cartLine.instructions && (
-                  <div className="line-note">“{l.cartLine.instructions}”</div>
-                )}
-                <div className="line-controls">
-                  <span className="qty-controls small">
-                    <button type="button" onClick={() => setLineQty(l.key, l.qty - 1)} aria-label="One less">
-                      −
-                    </button>
-                    <span className="count">{l.qty}</span>
-                    <button type="button" onClick={() => setLineQty(l.key, l.qty + 1)} aria-label="One more">
-                      +
-                    </button>
-                  </span>
+            {checkoutStep === 2 ? (
+              <>
+                {renderLines(false)}
+                {breakdownJsx}
+                {error && <div className="form-error">{error}</div>}
+                <div className="step-actions">
                   <button
                     type="button"
-                    className="auth-link"
-                    onClick={() => setLineQty(l.key, 0)}
+                    className="step-back"
+                    onClick={() => {
+                      setError("");
+                      setCheckoutStep(1);
+                    }}
                   >
-                    Remove
+                    ← Back
+                  </button>
+                  <button
+                    type="button"
+                    className="checkout-btn"
+                    disabled={placing || orderingClosed || lines.length === 0}
+                    onClick={placeOrder}
+                  >
+                    {placing
+                      ? "Placing order…"
+                      : `Place order — ${formatCents(total)}`}
                   </button>
                 </div>
-              </div>
-            ))}
+              </>
+            ) : (
+              renderLines(true)
+            )}
 
+            {checkoutStep === 1 && (
+              <>
             {!formOpen ? (
               <div className="auth-box">
                 <strong>Sign in or continue as guest</strong>
@@ -1174,64 +1417,21 @@ export default function Storefront({
               </div>
             )}
 
-            <div className="breakdown">
-              <div className="row">
-                <span>Subtotal</span>
-                <span>{formatCents(subtotal)}</span>
-              </div>
-              {discountPreview > 0 && (
-                <div className="row">
-                  <span>⭐ Loyalty discount ({redeemBlocks * 100} pts)</span>
-                  <span>−{formatCents(discountPreview)}</span>
-                </div>
-              )}
-              {serviceFeePreview > 0 && (
-                <div className="row">
-                  <span>Service fee</span>
-                  <span>{formatCents(serviceFeePreview)}</span>
-                </div>
-              )}
-              <div className="row">
-                <span>Sales tax (8%)</span>
-                <span>{formatCents(tax)}</span>
-              </div>
-              {fulfillment === "delivery" && (
-                <div className="row">
-                  <span>Delivery fee</span>
-                  <span>
-                    {fee.kind === "ok"
-                      ? fee.free_delivery
-                        ? "FREE 🎉"
-                        : formatCents(fee.delivery_charge_cents)
-                      : "—"}
-                  </span>
-                </div>
-              )}
-              {tip > 0 && (
-                <div className="row">
-                  <span>Tip</span>
-                  <span>{formatCents(tip)}</span>
-                </div>
-              )}
-              <div className="row grand">
-                <span>TOTAL</span>
-                <span>{formatCents(total)}</span>
-              </div>
-            </div>
+            {breakdownJsx}
 
             {error && <div className="form-error">{error}</div>}
-            <button
-              type="button"
-              className="checkout-btn"
-              disabled={placing || checkoutBlocked || orderingClosed || lines.length === 0}
-              onClick={placeOrder}
-            >
-              {placing
-                ? "Placing order…"
-                : testMode
-                  ? `Place ${fulfillment === "delivery" ? "Delivery" : "Pickup"} Order (TEST — no charge)`
-                  : `Pay on Stripe & Place ${fulfillment === "delivery" ? "Delivery" : "Pickup"} Order`}
-            </button>
+            <div className="step-actions">
+              <button
+                type="button"
+                className="checkout-btn"
+                disabled={orderingClosed || checkoutBlocked || lines.length === 0}
+                onClick={goToReview}
+              >
+                Review order →
+              </button>
+            </div>
+              </>
+            )}
               </>
             )}
           </section>
@@ -1256,9 +1456,15 @@ export default function Storefront({
           soldOut={unavailableSet.has(popupItem.id)}
           orderingClosed={orderingClosed}
           onClose={() => setPopupItem(null)}
-          onAdd={(qty, options, instructions) =>
-            addLine(popupItem, qty, options, instructions)
-          }
+          onAdd={(qty, options, instructions) => {
+            // Capture the popup photo BEFORE the popup closes (it
+            // unmounts right after onAdd) so it can fly to the bag bar.
+            const img = document.querySelector<HTMLImageElement>(
+              ".popup-card img.popup-photo"
+            );
+            addLine(popupItem, qty, options, instructions);
+            flyToBag(img, dishPhotos[popupItem.id] ?? popupItem.image);
+          }}
         />
       )}
 

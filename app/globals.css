@@ -777,6 +777,38 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
   min-height: 56px;
 }
 .checkout-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* Two-step checkout: the step action bar (Review / Back + Place order)
+   sticks just above the floating bag bar while the customer scrolls
+   the details form or the review. */
+.step-actions {
+  position: sticky;
+  bottom: 5.4rem;
+  z-index: 30;
+  display: flex;
+  gap: 0.6rem;
+  align-items: stretch;
+  margin-top: 1rem;
+  padding: 0.55rem;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(28, 24, 19, 0.18);
+}
+.step-actions .checkout-btn { margin-top: 0; flex: 1; border-radius: 999px; }
+.step-actions .step-back {
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0 1.1rem;
+  font-weight: 700;
+  min-height: 56px;
+  cursor: pointer;
+}
+@media (max-width: 700px) {
+  .step-actions { bottom: 8.2rem; }
+}
 .form-error { color: var(--pomegranate); font-weight: 600; margin-top: 0.6rem; }
 
 .success-banner {
