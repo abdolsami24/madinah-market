@@ -41,7 +41,8 @@
 
 import { getServiceClient } from "./supabase/server";
 import { normalizePhone } from "./shipday";
-import { formatCents } from "./menu";
+import { formatCents, MENU_BY_ID } from "./menu";
+import { getPricingMenuById } from "./menuDb";
 
 const DEFAULT_API_BASE = "https://integrations-api.ftservices.cloud";
 
@@ -139,7 +140,10 @@ export async function resolveLocationId(): Promise<string> {
  * Build the Fresh KDS "KDS Order" body for one paid order.
  * Pure function (no env, no network) so it can be eyeballed in tests.
  */
-export function buildFreshKdsPayload(order: FreshKdsOrder): Record<string, unknown> {
+export function buildFreshKdsPayload(
+  order: FreshKdsOrder,
+  numbers?: Record<string, string>
+): Record<string, unknown> {
   const isDelivery = order.fulfillment === "delivery";
 
   // Customer-facing delivery charge = the ONE merged line the customer
@@ -188,9 +192,12 @@ export function buildFreshKdsPayload(order: FreshKdsOrder): Record<string, unkno
       // exact multiple of qty by construction in lib/pricing.ts).
       const unitWithOptions =
         line.qty > 0 ? Math.round(line.line_total_cents / line.qty) : line.line_total_cents;
+      // The kitchen knows dishes by their menu numbers — prefix the
+      // number exactly as the website shows it ("#13 Sultani Kabob").
+      const num = numbers?.[line.id];
       const item: Record<string, unknown> = {
         lineId: String(i + 1),
-        name: line.name,
+        name: num && !line.name.startsWith("#") ? `${num} ${line.name}` : line.name,
         qty: line.qty,
         price: formatCents(unitWithOptions),
         mods: (line.options ?? []).map((o) => ({ name: o.name, qty: 1 })),
@@ -266,6 +273,22 @@ export async function sendOrderToFreshKds(
   if (order.freshkds_status === "sent") return { ok: true, detail: "already sent" };
   try {
     const locationId = await resolveLocationId();
+    // Menu numbers for the item names: live menu (DB) first, the
+    // built-in menu as fallback. Fail-soft — no numbers, plain names.
+    const numbers: Record<string, string> = {};
+    try {
+      const byId = await getPricingMenuById();
+      for (const [id, item] of Object.entries(byId)) {
+        if (item.number) numbers[id] = item.number;
+      }
+    } catch {
+      /* fall through to the built-in menu */
+    }
+    if (Object.keys(numbers).length === 0) {
+      for (const [id, item] of Object.entries(MENU_BY_ID)) {
+        if (item.number) numbers[id] = item.number;
+      }
+    }
     const res = await fetch(`${apiBase()}/integrators/kds-orders`, {
       method: "POST",
       headers: {
@@ -273,7 +296,7 @@ export async function sendOrderToFreshKds(
         "x-location-id": locationId,
         "x-device-ids": "all",
       },
-      body: JSON.stringify(buildFreshKdsPayload(order)),
+      body: JSON.stringify(buildFreshKdsPayload(order, numbers)),
       signal: AbortSignal.timeout(10_000),
     });
     if (res.status === 201 || res.ok) {
