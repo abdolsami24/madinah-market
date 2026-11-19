@@ -15,6 +15,8 @@ export interface NotifyOrder {
   subtotal_cents: number;
   tax_cents: number;
   delivery_fee_cents: number;
+  /** Stage 3: the restaurant's extra delivery service fee, if any. */
+  delivery_markup_cents?: number;
   tip_cents: number;
   total_cents: number;
   payment_status: string;
@@ -22,7 +24,7 @@ export interface NotifyOrder {
 
 export async function notifyOwner(order: NotifyOrder): Promise<void> {
   const to = process.env.OWNER_NOTIFICATION_EMAIL || "Abdolsami@yahoo.com";
-  const subject = `Madinah Bakery & Kabob — New ${order.fulfillment} order #${order.id} (${formatCents(
+  const subject = `Madinah Market — New ${order.fulfillment} order #${order.id} (${formatCents(
     order.total_cents
   )})`;
   const lines = (order.items_json ?? [])
@@ -38,7 +40,10 @@ export async function notifyOwner(order: NotifyOrder): Promise<void> {
     "",
     `Subtotal: ${formatCents(order.subtotal_cents)}`,
     `Tax (8%): ${formatCents(order.tax_cents)}`,
-    order.delivery_fee_cents > 0 ? `Delivery fee: ${formatCents(order.delivery_fee_cents)}` : "",
+    order.delivery_fee_cents > 0 ? `Delivery fee (DoorDash): ${formatCents(order.delivery_fee_cents)}` : "",
+    (order.delivery_markup_cents ?? 0) > 0
+      ? `Delivery service fee: ${formatCents(order.delivery_markup_cents ?? 0)}`
+      : "",
     order.tip_cents > 0 ? `Tip: ${formatCents(order.tip_cents)}` : "",
     `TOTAL: ${formatCents(order.total_cents)}`,
   ]
@@ -53,7 +58,7 @@ export async function notifyOwner(order: NotifyOrder): Promise<void> {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
-          from: "Madinah Bakery & Kabob Website <orders@madinahmarket.example>",
+          from: "Madinah Market Website <orders@madinahmarket.example>",
           to,
           subject,
           text,

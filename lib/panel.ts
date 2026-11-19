@@ -41,6 +41,21 @@ export interface PanelOrder {
   kitchen_status: string;
   shipday_status: string | null;
   created_at: string;
+  // Stage 3 (DoorDash) — present once supabase/stage3-schema.sql has
+  // run; undefined on a not-yet-migrated database.
+  delivery_provider?: string | null;
+  delivery_external_id?: string | null;
+  delivery_status?: string | null;
+  delivery_quote_id?: string | null;
+  delivery_error?: string | null;
+  delivery_status_at?: string | null;
+  delivery_markup_cents?: number;
+  /** Joined from delivery_quotes (mode/fee/expiry) when available. */
+  delivery_quote?: {
+    provider_mode: string;
+    fee_cents: number;
+    expires_at: string;
+  } | null;
 }
 
 /** Full order row minus Stripe's internal id (staff never need it). */
@@ -170,7 +185,43 @@ export async function listPanelOrders(filters: OrderFilters): Promise<PanelOrder
     }
     const { data, error } = await query;
     if (error) return [];
-    return ((data as Record<string, unknown>[]) ?? []).map(toPanelOrder);
+    const orders = ((data as Record<string, unknown>[]) ?? []).map(toPanelOrder);
+    // Stage 3: attach each order's stored DoorDash quote (provider
+    // mode, pure fee, expiry) for the detail pane's Delivery block.
+    // Fails soft — no delivery_quotes table yet, no attachment.
+    try {
+      const quoteIds = [
+        ...new Set(
+          orders
+            .map((o) => o.delivery_quote_id)
+            .filter((v): v is string => typeof v === "string" && v.length > 0)
+        ),
+      ];
+      if (quoteIds.length > 0) {
+        const { data: quotes } = await supabase
+          .from("delivery_quotes")
+          .select("id, provider_mode, fee_cents, expires_at")
+          .in("id", quoteIds);
+        const byId = new Map(
+          (quotes ?? []).map((q) => [
+            q.id as string,
+            {
+              provider_mode: q.provider_mode as string,
+              fee_cents: q.fee_cents as number,
+              expires_at: q.expires_at as string,
+            },
+          ])
+        );
+        for (const o of orders) {
+          o.delivery_quote = o.delivery_quote_id
+            ? (byId.get(o.delivery_quote_id) ?? null)
+            : null;
+        }
+      }
+    } catch {
+      /* quote join is decorative — never break the orders list */
+    }
+    return orders;
   } catch {
     return [];
   }

@@ -4,7 +4,9 @@
 
 import { getServiceClient } from "./supabase/server";
 import { notifyOwner, type NotifyOrder } from "./email";
-import { dispatchToShipday, type ShipdayOrder } from "./shipday";
+import type { ShipdayOrder } from "./shipday";
+import { dispatchDeliveryForOrder } from "./delivery";
+import { smsOrderConfirmed } from "./sms";
 import { earnPointsForPaidOrder } from "./points";
 
 export type OrderRow = NotifyOrder &
@@ -13,6 +15,14 @@ export type OrderRow = NotifyOrder &
     stripe_session_id: string | null;
     shipday_status: string | null;
     created_at: string;
+    // Stage 3 (DoorDash) — optional because the columns arrive with
+    // supabase/stage3-schema.sql; absent on a not-yet-migrated DB.
+    delivery_provider?: string | null;
+    delivery_external_id?: string | null;
+    delivery_status?: string | null;
+    delivery_quote_id?: string | null;
+    delivery_error?: string | null;
+    delivery_markup_cents?: number;
   };
 
 export async function getOrder(orderId: number): Promise<OrderRow | null> {
@@ -27,8 +37,9 @@ export async function getOrder(orderId: number): Promise<OrderRow | null> {
 }
 
 /**
- * Marks an unpaid order as paid/test_paid, then fires the owner email and
- * (for delivery orders) Shipday dispatch. Side-effect failures are recorded
+ * Marks an unpaid order as paid/test_paid, then fires the owner email,
+ * the customer confirmation SMS, and (for delivery orders) the
+ * DoorDash Drive dispatch. Side-effect failures are recorded
  * or logged, never thrown back at the payment flow.
  */
 export async function markOrderPaid(
@@ -66,18 +77,32 @@ export async function markOrderPaid(
     console.error("[orders] owner notification failed:", err);
   }
 
-  // Shipday dispatch for delivery orders (best-effort, never twice).
-  if (updated.fulfillment === "delivery" && !updated.shipday_order_id) {
-    const result = await dispatchToShipday(updated);
-    await supabase
-      .from("orders")
-      .update({
-        shipday_status: result.status,
-        ...(result.shipday_order_id ? { shipday_order_id: result.shipday_order_id } : {}),
-      })
-      .eq("id", orderId);
-    updated.shipday_status = result.status;
-    if (result.shipday_order_id) updated.shipday_order_id = result.shipday_order_id;
+  // DoorDash Drive dispatch for delivery orders (Stage 3 — DoorDash
+  // replaced Shipday as the only delivery provider). Best-effort and
+  // idempotent: a failure leaves the order PAID with delivery_status
+  // 'pending' + delivery_error for the admin Retry button; it never
+  // fails the customer's payment.
+  if (updated.fulfillment === "delivery") {
+    try {
+      await dispatchDeliveryForOrder(updated);
+      const fresh = await getOrder(orderId).catch(() => null);
+      if (fresh) {
+        updated.delivery_provider = fresh.delivery_provider;
+        updated.delivery_external_id = fresh.delivery_external_id;
+        updated.delivery_status = fresh.delivery_status;
+        updated.delivery_error = fresh.delivery_error;
+      }
+    } catch (err) {
+      console.error("[orders] DoorDash dispatch failed:", err);
+    }
+  }
+
+  // Customer confirmation SMS (best-effort; no-op until Twilio is
+  // configured in Vercel).
+  try {
+    await smsOrderConfirmed(updated);
+  } catch (err) {
+    console.error("[orders] confirmation SMS failed:", err);
   }
 
   return { order: updated, alreadyPaid: false };
