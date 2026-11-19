@@ -194,6 +194,15 @@ export async function setDishPhoto(itemId: string, url: string): Promise<void> {
 
 export const DISH_PHOTOS_BUCKET = "dish-photos";
 
+/**
+ * Reserved dish_photos ids that are NOT menu dishes: the homepage hero
+ * photo and hero video (Admin → Operations). They live in the same table
+ * and bucket as dish photos; the storefront reads them by these exact keys
+ * and never renders them as dishes.
+ */
+export const HERO_PHOTO_ID = "__hero__";
+export const HERO_VIDEO_ID = "__hero_video__";
+
 /** Uploads a dish photo to Supabase Storage; returns its public URL. */
 export async function uploadDishPhoto(
   itemId: string,
@@ -206,7 +215,13 @@ export async function uploadDishPhoto(
       ? "png"
       : contentType === "image/webp"
         ? "webp"
-        : "jpg";
+        : contentType === "image/gif"
+          ? "gif"
+          : contentType === "video/mp4"
+            ? "mp4"
+            : contentType === "video/webm"
+              ? "webm"
+              : "jpg";
   const path = `${itemId}-${Date.now()}.${ext}`;
   const { error } = await supabase.storage
     .from(DISH_PHOTOS_BUCKET)
@@ -215,6 +230,16 @@ export async function uploadDishPhoto(
   const { data } = supabase.storage.from(DISH_PHOTOS_BUCKET).getPublicUrl(path);
   await setDishPhoto(itemId, data.publicUrl);
   return data.publicUrl;
+}
+
+/**
+ * Removes a dish_photos row (the built-in photo / fallback applies again).
+ * The stored file is left in the bucket, same as when a dish is deleted.
+ */
+export async function deleteDishPhoto(itemId: string): Promise<void> {
+  const supabase = getServiceClient();
+  const { error } = await supabase.from("dish_photos").delete().eq("item_id", itemId);
+  if (error) throw error;
 }
 
 // ---- Menu management (categories + items) ----------------------------------

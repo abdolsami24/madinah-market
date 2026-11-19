@@ -18,6 +18,12 @@ import { minutesToInputValue, type HoursConfig } from "@/lib/hours";
 import { deliveryStatusLabel } from "@/lib/deliveryStatus";
 import { adminStatusLabel } from "@/lib/kitchenStatus";
 
+// Reserved dish_photos ids for the homepage hero (mirror lib/admin.ts —
+// this client component cannot import the server-only module). They are
+// not menu dishes; the homepage reads them by these exact keys.
+const HERO_PHOTO_ID = "__hero__";
+const HERO_VIDEO_ID = "__hero_video__";
+
 // ---- shared types -----------------------------------------------------------
 
 interface Promotion {
@@ -501,7 +507,7 @@ export default function AdminPanel() {
     await loadOrders();
   }
 
-  async function uploadPhoto(itemId: string, file: File) {
+  async function uploadPhoto(itemId: string, file: File, okText = "Photo updated.") {
     if (!session?.access_token) return;
     setBusy(true);
     setMsg("");
@@ -517,7 +523,7 @@ export default function AdminPanel() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Upload failed");
       setState(data as AdminState);
-      setMsg("Photo updated.");
+      setMsg(okText);
       await loadCatalog();
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Upload failed.");
@@ -1435,6 +1441,14 @@ export default function AdminPanel() {
         </div>
       </div>
     );
+    const heroPhotoCustom = state.photos[HERO_PHOTO_ID];
+    const heroVideo = state.photos[HERO_VIDEO_ID];
+    const heroFallbackDish = state.menu.items.find((i) => i.id === "sultani-kabob");
+    const heroPhotoShown =
+      heroPhotoCustom ??
+      (heroFallbackDish
+        ? (state.photos[heroFallbackDish.id] ?? heroFallbackDish.image)
+        : undefined);
     return (
       <>
         <section className="ops-card">
@@ -1686,6 +1700,103 @@ export default function AdminPanel() {
             the absorbed amount. The service fee (if on) is still charged.
             Pickup orders are not affected.
           </p>
+        </section>
+        <section className="ops-card">
+          <h3>Homepage hero</h3>
+          <div className="ops-field">
+            <label>Hero photo</label>
+            {heroPhotoShown && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={heroPhotoShown} alt="" className="ops-dish-photo" />
+            )}
+            <p className="ops-muted">
+              {heroPhotoCustom
+                ? "The homepage is showing your custom hero photo."
+                : "No custom hero photo yet — the homepage is using the Sultani Kabob photo. Uploading one here does not change the Sultani dish photo."}
+            </p>
+            <div className="ops-btn-row">
+              <label className="ops-upload">
+                Upload hero photo
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  hidden
+                  disabled={busy}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) uploadPhoto(HERO_PHOTO_ID, f, "Hero photo updated.");
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              {heroPhotoCustom && (
+                <button
+                  type="button"
+                  className="ops-btn"
+                  disabled={busy}
+                  onClick={() =>
+                    act(
+                      { action: "photo_delete", item_id: HERO_PHOTO_ID },
+                      "Hero photo removed — the homepage uses the Sultani Kabob photo again."
+                    )
+                  }
+                >
+                  Remove hero photo
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="ops-field">
+            <label>Hero video (optional)</label>
+            {heroVideo && (
+              <video
+                src={heroVideo}
+                className="ops-dish-photo"
+                autoPlay
+                muted
+                loop
+                playsInline
+              />
+            )}
+            <p className="ops-muted">
+              {heroVideo
+                ? "A hero video is set — on the homepage it plays instead of the photo, with the hero photo as its poster."
+                : "No hero video. If you upload one, it plays on the homepage instead of the photo, with the hero photo as its poster."}{" "}
+              The video plays muted on a loop. Keep it short — under about 15
+              seconds / 10 MB (MP4 or WebM, max 15 MB).
+            </p>
+            <div className="ops-btn-row">
+              <label className="ops-upload">
+                Upload hero video
+                <input
+                  type="file"
+                  accept="video/mp4,video/webm"
+                  hidden
+                  disabled={busy}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) uploadPhoto(HERO_VIDEO_ID, f, "Hero video updated.");
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              {heroVideo && (
+                <button
+                  type="button"
+                  className="ops-btn"
+                  disabled={busy}
+                  onClick={() =>
+                    act(
+                      { action: "photo_delete", item_id: HERO_VIDEO_ID },
+                      "Hero video removed — the homepage shows the hero photo again."
+                    )
+                  }
+                >
+                  Remove hero video
+                </button>
+              )}
+            </div>
+          </div>
         </section>
         <section className="ops-card">
           <h3>Homepage promotions</h3>

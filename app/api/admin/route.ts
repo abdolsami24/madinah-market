@@ -24,6 +24,9 @@ import {
   deletePromotion,
   getDishPhotos,
   uploadDishPhoto,
+  deleteDishPhoto,
+  HERO_PHOTO_ID,
+  HERO_VIDEO_ID,
   addCategory,
   addMenuItem,
   getHoursConfig,
@@ -127,14 +130,28 @@ export async function POST(req: Request) {
       if (!itemId || !(file instanceof File)) {
         return NextResponse.json({ error: "Missing dish or file." }, { status: 400 });
       }
-      if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
-        return NextResponse.json(
-          { error: "Please choose a JPG, PNG or WebP image." },
-          { status: 400 }
-        );
-      }
-      if (file.size > 5 * 1024 * 1024) {
-        return NextResponse.json({ error: "Image is too large (max 5 MB)." }, { status: 400 });
+      // The reserved hero-video id takes a video file; every other id
+      // (dishes and the hero photo) takes an image.
+      if (itemId === HERO_VIDEO_ID) {
+        if (!["video/mp4", "video/webm"].includes(file.type)) {
+          return NextResponse.json(
+            { error: "Please choose an MP4 or WebM video." },
+            { status: 400 }
+          );
+        }
+        if (file.size > 15 * 1024 * 1024) {
+          return NextResponse.json({ error: "Video is too large (max 15 MB)." }, { status: 400 });
+        }
+      } else {
+        if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) {
+          return NextResponse.json(
+            { error: "Please choose a JPG, PNG, WebP or GIF image." },
+            { status: 400 }
+          );
+        }
+        if (file.size > 5 * 1024 * 1024) {
+          return NextResponse.json({ error: "Image is too large (max 5 MB)." }, { status: 400 });
+        }
       }
       await uploadDishPhoto(itemId, await file.arrayBuffer(), file.type);
       await logAudit(user.email ?? user.id, "admin.photo_upload", { item_id: itemId });
@@ -264,6 +281,20 @@ export async function POST(req: Request) {
           item_id: itemId,
           available: body.available === true,
         });
+        break;
+      }
+      case "photo_delete": {
+        const itemId = String(body.item_id ?? "");
+        // The reserved hero ids are not menu dishes but are explicitly
+        // allowed; any other id must be a real dish.
+        if (itemId !== HERO_PHOTO_ID && itemId !== HERO_VIDEO_ID) {
+          const menu = await getDbMenu();
+          if (!menu.items.some((i) => i.id === itemId) && !getMenuItem(itemId)) {
+            throw new Error("Unknown dish");
+          }
+        }
+        await deleteDishPhoto(itemId);
+        await logAudit(actor, "admin.photo_delete", { item_id: itemId });
         break;
       }
       case "promo_create": {

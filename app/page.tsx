@@ -1,6 +1,12 @@
 import Link from "next/link";
 import { getDbMenu } from "@/lib/menuDb";
-import { getDishPhotos, getHoursConfig, listPromotions } from "@/lib/admin";
+import {
+  getDishPhotos,
+  getHoursConfig,
+  listPromotions,
+  HERO_PHOTO_ID,
+  HERO_VIDEO_ID,
+} from "@/lib/admin";
 import { formatCents, type MenuItem } from "@/lib/menu";
 import {
   pickupWindows,
@@ -29,11 +35,18 @@ export default async function HomePage() {
   const pickupWins = pickupWindows(hours);
   const deliveryWins = deliveryWindows(hours);
   const testMode = !process.env.STRIPE_SECRET_KEY;
-  // Hero photo: the house signature (Sultani), like the reference site.
+  // Hero media: an optional custom hero photo / hero video (Admin →
+  // Operations, kept in dish_photos under reserved ids) wins; until the
+  // owner uploads one, the hero shows the house signature (Sultani),
+  // like the reference site.
   const heroDish =
     byId["sultani-kabob"] ??
     POPULAR_NOW.map((id) => byId[id]).find(Boolean) ??
     menu.items.find((m) => m.image);
+  const heroPhotoSrc = heroDish
+    ? (photos[HERO_PHOTO_ID] ?? photos[heroDish.id] ?? heroDish.image)
+    : undefined;
+  const heroVideoSrc = photos[HERO_VIDEO_ID];
 
   function dishCard(m: MenuItem) {
     return (
@@ -85,13 +98,27 @@ export default async function HomePage() {
               3126 S Parker Rd, Aurora, CO 80014
             </p>
           </div>
-          {heroDish && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              className="hero-photo"
-              src={photos[heroDish.id] ?? heroDish.image}
-              alt={heroDish.name}
-            />
+          {heroDish && heroPhotoSrc && (
+            heroVideoSrc ? (
+              <video
+                className="hero-photo"
+                poster={heroPhotoSrc}
+                autoPlay
+                muted
+                loop
+                playsInline
+                preload="metadata"
+              >
+                <source src={heroVideoSrc} />
+              </video>
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                className="hero-photo"
+                src={heroPhotoSrc}
+                alt={heroDish.name}
+              />
+            )
           )}
         </div>
       </section>
