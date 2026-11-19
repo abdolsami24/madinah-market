@@ -17,6 +17,9 @@
 //   NO Cancel in the kitchen (owner's rule, 2026-11-18): once an
 //   order is Accepted it cannot be cancelled here — cancelling stays
 //   possible only for the owner in the admin panel.
+// - NO Admin link and NO Log out button on this page (owner's rule,
+//   2026-11-18): the kitchen screen is only for seeing orders and
+//   the one ready tap — nothing else can be done from here.
 // - 80mm ticket printing, auto-print toggle.
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -177,12 +180,6 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
     if (error) setLoginError("Login failed — check the email and password.");
   }
 
-  async function logout() {
-    const supabase = getBrowserClient();
-    await supabase?.auth.signOut();
-    setOrders([]);
-  }
-
   // ---- order feed -----------------------------------------------------------
   const fetchOrders = useCallback(async () => {
     if (!session) return;
@@ -335,12 +332,6 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
               />
               Auto-print new orders
             </label>
-            <a className="k-btn" href="/admin" style={{ textDecoration: "none" }}>
-              ⚙️ Admin
-            </a>
-            <button type="button" className="k-btn" onClick={logout}>
-              Log out
-            </button>
           </div>
         </div>
 
