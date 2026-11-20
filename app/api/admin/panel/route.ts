@@ -7,7 +7,11 @@
 //     orders accepts &status=&payment=&q=&from=&to=
 // POST actions (JSON):
 //     { action: "update_item", id, name, number, category, price_cents,
-//       description, station }
+//       description, station, option_groups? }
+//       option_groups (optional) is the options editor's dollars-based
+//       shape: [{ name, single?, choices: [{ name, price, hide_price? }] }].
+//       When present it is strictly validated (see validateEditorOptionGroups)
+//       and stored with the dish; when absent the dish's options are untouched.
 //     { action: "delete_item", id }
 //     { action: "rename_category", from, to }
 //     { action: "set_order_status", order_id, status }
@@ -28,6 +32,7 @@ import {
   KITCHEN_STATUSES,
 } from "@/lib/panel";
 import { listAudit, logAudit } from "@/lib/audit";
+import { validateEditorOptionGroups } from "@/lib/menuOptions";
 import { reversePointsForCancelledOrder } from "@/lib/points";
 import { smsPickupReady } from "@/lib/sms";
 import { shouldSendReadySms } from "@/lib/kitchenStatus";
@@ -137,6 +142,12 @@ export async function POST(req: Request) {
         if (!Number.isFinite(price_cents) || price_cents < 1 || price_cents > 100000) {
           throw new Error("Enter a valid price");
         }
+        // Options editor: only when the key is present in the request.
+        // Validation throws a staff-readable error on any problem, so a
+        // bad options edit rejects the whole save before anything writes.
+        const option_groups = Object.prototype.hasOwnProperty.call(body, "option_groups")
+          ? validateEditorOptionGroups(body.option_groups)
+          : undefined;
         await updateMenuItem(id, {
           name,
           number: numberRaw || null,
@@ -144,8 +155,16 @@ export async function POST(req: Request) {
           price_cents,
           description,
           station,
+          option_groups,
         });
         await logAudit(actor, "catalog.update_item", { id, name, category, price_cents, station });
+        if (option_groups !== undefined) {
+          await logAudit(actor, "catalog.update_item_options", {
+            id,
+            groups: option_groups.length,
+            choices: option_groups.reduce((n, g) => n + g.choices.length, 0),
+          });
+        }
         break;
       }
       case "delete_item": {
