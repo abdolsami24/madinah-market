@@ -2,21 +2,28 @@
 // existing online menu (GloriaFood / denverhalal.com) — see
 // menu-import.json (format madinah-menu-import/v1) at the project root.
 //
-// Every group is optional and multi-select (checkboxes). A choice is
-// identified by its (group name, choice name) pair; prices are integer
-// cents added to the dish's base price. The server (lib/pricing.ts)
-// re-validates every selection against this data — browser-sent prices
-// for options are never trusted.
+// Groups are optional. Most are multi-select (checkboxes); a group with
+// `single: true` is pick-one (the popup deselects the group's other
+// choices). A choice with `hide_price: true` shows no price on its popup
+// line — its price appears only in the popup's Add-button total (the
+// "Meal Deal" choices). A choice is identified by its (group name,
+// choice name) pair; prices are integer cents added to the dish's base
+// price. The server (lib/pricing.ts) re-validates every selection
+// against this data — browser-sent prices for options are never trusted.
 
 import menuImport from "../menu-import.json";
 
 export interface OptionChoice {
   name: string;
   price_delta_cents: number;
+  /** Display only: hide this choice's price on its popup line. */
+  hide_price?: boolean;
 }
 
 export interface OptionGroup {
   name: string;
+  /** Pick-one group: selecting a choice deselects the group's others. */
+  single?: boolean;
   choices: OptionChoice[];
 }
 
@@ -29,20 +36,26 @@ export interface SelectedOption {
 
 interface ImportItem {
   id: string;
-  option_groups?: { name: string; choices: OptionChoice[] }[];
+  option_groups?: {
+    name: string;
+    single?: boolean;
+    choices: (OptionChoice & { hide_price?: boolean })[];
+  }[];
 }
 
 const items = (menuImport as { items: ImportItem[] }).items ?? [];
 
-/** Built-in option groups per menu item id (18 of the 36 dishes). */
+/** Built-in option groups per menu item id (22 of the 40 dishes). */
 export const OPTION_GROUPS_BY_ID: Record<string, OptionGroup[]> = {};
 for (const it of items) {
   if (it.option_groups && it.option_groups.length > 0) {
     OPTION_GROUPS_BY_ID[it.id] = it.option_groups.map((g) => ({
       name: g.name,
+      ...(g.single ? { single: true } : {}),
       choices: g.choices.map((c) => ({
         name: c.name,
         price_delta_cents: c.price_delta_cents,
+        ...(c.hide_price ? { hide_price: true } : {}),
       })),
     }));
   }
@@ -61,9 +74,16 @@ export function sanitizeOptionGroups(raw: unknown): OptionGroup[] | undefined {
       choices.push({
         name: c.name,
         price_delta_cents: Number.isFinite(delta) ? delta : 0,
+        ...(c.hide_price === true ? { hide_price: true } : {}),
       });
     }
-    if (choices.length > 0) groups.push({ name: g.name, choices });
+    if (choices.length > 0) {
+      groups.push({
+        name: g.name,
+        ...(g.single === true ? { single: true } : {}),
+        choices,
+      });
+    }
   }
   return groups.length > 0 ? groups : undefined;
 }

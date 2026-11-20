@@ -1,4 +1,4 @@
-// Exact Madinah Bakery & Kabob menu — 36 items, 6 categories.
+// Exact Madinah Market menu — 40 items, 6 categories.
 // Prices are integer cents. This file is the single trusted price source:
 // the server always recomputes totals from here, never from the browser.
 
@@ -62,6 +62,10 @@ export const MENU: MenuItem[] = [
   item("falafel-platter", "Falafel Platter", "Falafel over rice with salad and tahini.", 1175, "Platters", "#14"),
   item("fry-fish-rice", "Fry Fish over Rice", "Crispy fried fish served over rice.", 1175, "Platters", "#15"),
   item("chicken-wings-fries", "Chicken Wings with Fries", "Chicken wings served with french fries.", 899, "Platters", "#16"),
+  item("family-meal-deal", "Family Meal Deal", "Serves 4–5 · Rice, 8 Kobideh Kabob, 4 Chicken Kabob, French Fries, Salad, 4 Pita Bread & 4 Coca-Cola (16.9 fl. oz)", 6999, "Platters", "#17"),
+  item("family-meal-deal-large", "Family Meal Deal", "Serves 8–10 · Rice, 16 Kobideh Kabob, 8 Chicken Kabob, French Fries, Salad, 8 Pita Bread & 8 Coca-Cola (16.9 fl. oz)", 13899, "Platters", "#18"),
+  item("family-meal-deal-lamb", "Family Meal Deal — Lamb Shank", "Serves 4–5 · Rice, 4 Lamb Shank, French Fries, Salad, 4 Pita Bread & 4 Coca-Cola (16.9 fl. oz)", 6999, "Platters", "#19"),
+  item("family-meal-deal-lamb-large", "Family Meal Deal — Lamb Shank", "Serves 8–9 · Rice, 8 Lamb Shank, French Fries, Salad, 8 Pita Bread & 8 Coca-Cola (16.9 fl. oz)", 13899, "Platters", "#20"),
 
   // ---- Sandwiches -----------------------------------------------------------
   item("gyros-sandwich", "Gyros Sandwich", "Lamb gyros wrapped in warm pita with vegetables and sauce.", 899, "Sandwiches", "#1"),
