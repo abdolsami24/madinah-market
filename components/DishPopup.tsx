@@ -1,10 +1,13 @@
 "use client";
 
 // Dish options popup: the dish's additional-option groups as checkboxes
-// (all optional, multi-select), a quantity stepper and a special
-// instructions box. The Add button shows the live total — base price
-// plus the chosen options, times quantity. Prices shown here are for
-// display; the server re-prices everything at checkout.
+// (all optional; most groups are multi-select, groups flagged `single`
+// are pick-one), a quantity stepper and a special instructions box.
+// Choices flagged `hide_price` show no price on their line — their price
+// appears only in the Add-button total. The Add button shows the live
+// total — base price plus the chosen options, times quantity. Prices
+// shown here are for display; the server re-prices everything at
+// checkout.
 
 import { useMemo, useState } from "react";
 import { formatCents, type MenuItem, type SelectedOption } from "@/lib/menu";
@@ -47,8 +50,16 @@ export default function DishPopup({
     setSelected((prev) => {
       const next = new Set(prev);
       const key = `${group}::${name}`;
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        // Pick-one groups: selecting a choice clears the group's others.
+        const g = (item.option_groups ?? []).find((x) => x.name === group);
+        if (g?.single) {
+          for (const c of g.choices) next.delete(`${group}::${c.name}`);
+        }
+        next.add(key);
+      }
       return next;
     });
   }
@@ -87,11 +98,13 @@ export default function DishPopup({
                       onChange={() => toggle(g.name, c.name)}
                     />
                     <span className="opt-name">{c.name}</span>
-                    <span className="opt-price">
-                      {c.price_delta_cents > 0
-                        ? `+${formatCents(c.price_delta_cents)}`
-                        : "Free"}
-                    </span>
+                    {!c.hide_price && (
+                      <span className="opt-price">
+                        {c.price_delta_cents > 0
+                          ? `+${formatCents(c.price_delta_cents)}`
+                          : "Free"}
+                      </span>
+                    )}
                   </label>
                 );
               })}
