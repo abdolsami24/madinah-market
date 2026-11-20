@@ -1449,6 +1449,28 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
   border-radius: 14px;
   border: 1px solid var(--hairline);
 }
+/* Catalog options editor (groups + choices inside the dish editor). */
+.ops-opt-group {
+  display: grid;
+  gap: 0.55rem;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 0.75rem;
+  background: var(--surface);
+}
+.ops-opt-group .opt-group-name { flex: 1 1 auto; width: auto; }
+.ops-opt-choice { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.ops-opt-choice .opt-choice-name { flex: 1 1 9rem; width: auto; }
+.ops-opt-choice .opt-choice-price { flex: 0 0 6.5rem; width: 6.5rem; }
+.ops-opt-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+.ops-opt-check input { width: auto; min-height: 0; }
 .ops-detail-grid {
   display: grid;
   grid-template-columns: 130px minmax(0, 1fr);
