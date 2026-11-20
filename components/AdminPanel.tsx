@@ -155,6 +155,18 @@ interface AuditData {
   }[];
 }
 
+interface CatalogOptionChoice {
+  name: string;
+  price_delta_cents: number;
+  hide_price?: boolean;
+}
+
+interface CatalogOptionGroup {
+  name: string;
+  single?: boolean;
+  choices: CatalogOptionChoice[];
+}
+
 interface CatalogItem {
   id: string;
   number?: string;
@@ -164,6 +176,20 @@ interface CatalogItem {
   category: string;
   image: string;
   station: string;
+  option_groups: CatalogOptionGroup[];
+}
+
+/** Options editor draft: prices stay strings (dollars) until save. */
+interface EdOptionChoice {
+  name: string;
+  price: string;
+  hide_price: boolean;
+}
+
+interface EdOptionGroup {
+  name: string;
+  single: boolean;
+  choices: EdOptionChoice[];
 }
 
 interface CatalogData {
@@ -286,6 +312,7 @@ export default function AdminPanel() {
   const [edPrice, setEdPrice] = useState("");
   const [edDesc, setEdDesc] = useState("");
   const [edStation, setEdStation] = useState("main");
+  const [edOptions, setEdOptions] = useState<EdOptionGroup[]>([]);
   const [renameValues, setRenameValues] = useState<Record<string, string>>({});
 
   // Operations forms (promotions / category / hours).
@@ -570,6 +597,7 @@ export default function AdminPanel() {
       setEdPrice("");
       setEdDesc("");
       setEdStation("main");
+      setEdOptions([]);
     } else if (selectedDish) {
       setEdName(selectedDish.name);
       setEdNumber(selectedDish.number ?? "");
@@ -577,8 +605,36 @@ export default function AdminPanel() {
       setEdPrice((selectedDish.price_cents / 100).toFixed(2));
       setEdDesc(selectedDish.description);
       setEdStation(selectedDish.station || "main");
+      setEdOptions(
+        (selectedDish.option_groups ?? []).map((g) => ({
+          name: g.name,
+          single: g.single === true,
+          choices: g.choices.map((c) => ({
+            name: c.name,
+            price: (c.price_delta_cents / 100).toFixed(2),
+            hide_price: c.hide_price === true,
+          })),
+        }))
+      );
     }
   }, [selectedDishId, selectedDish, catalog]);
+
+  // ---- catalog options editor helpers --------------------------------------
+  const edChoiceTotal = edOptions.reduce((n, g) => n + g.choices.length, 0);
+
+  function setEdGroup(gi: number, patch: Partial<EdOptionGroup>) {
+    setEdOptions((prev) => prev.map((g, i) => (i === gi ? { ...g, ...patch } : g)));
+  }
+
+  function setEdChoice(gi: number, ci: number, patch: Partial<EdOptionChoice>) {
+    setEdOptions((prev) =>
+      prev.map((g, i) =>
+        i === gi
+          ? { ...g, choices: g.choices.map((c, j) => (j === ci ? { ...c, ...patch } : c)) }
+          : g
+      )
+    );
+  }
 
   const visibleDishes = useMemo(() => {
     const q = dishSearch.trim().toLowerCase();
@@ -1298,6 +1354,162 @@ export default function AdminPanel() {
                       onChange={(e) => setEdDesc(e.target.value)}
                     />
                   </div>
+                  {isNew && (
+                    <p className="ops-muted">
+                      Options (extras) can be added once the dish is saved — reopen it
+                      here to edit them.
+                    </p>
+                  )}
+                  {selectedDish && (
+                    <div className="ops-field">
+                      <label>Options (extras)</label>
+                      <p className="ops-muted">
+                        The choices customers see in this dish's popup. Prices are in
+                        dollars; changes apply to the website as soon as you tap Save
+                        changes below.
+                      </p>
+                      {edOptions.length === 0 && (
+                        <p className="ops-muted">No options yet — add a group.</p>
+                      )}
+                      {edOptions.map((g, gi) => (
+                        <div className="ops-opt-group" key={gi}>
+                          <div className="ops-inline">
+                            <input
+                              className="opt-group-name"
+                              value={g.name}
+                              onChange={(e) => setEdGroup(gi, { name: e.target.value })}
+                              placeholder="Group name — e.g. Extras"
+                              aria-label="Option group name"
+                            />
+                            <button
+                              type="button"
+                              className="ops-btn danger"
+                              disabled={busy}
+                              onClick={() => {
+                                if (
+                                  !window.confirm(
+                                    `Delete the "${g.name || "unnamed"}" option group and all its choices?`
+                                  )
+                                )
+                                  return;
+                                setEdOptions((prev) => prev.filter((_, i) => i !== gi));
+                              }}
+                            >
+                              Delete group
+                            </button>
+                          </div>
+                          <label className="ops-opt-check">
+                            <input
+                              type="checkbox"
+                              checked={g.single}
+                              onChange={(e) => setEdGroup(gi, { single: e.target.checked })}
+                            />
+                            Pick one only (the customer chooses a single choice in this group)
+                          </label>
+                          {g.choices.map((c, ci) => (
+                            <div className="ops-opt-choice" key={ci}>
+                              <input
+                                className="opt-choice-name"
+                                value={c.name}
+                                onChange={(e) => setEdChoice(gi, ci, { name: e.target.value })}
+                                placeholder="Choice name"
+                                aria-label="Choice name"
+                              />
+                              <input
+                                className="opt-choice-price"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={c.price}
+                                onChange={(e) => setEdChoice(gi, ci, { price: e.target.value })}
+                                placeholder="0.00"
+                                aria-label="Choice price in dollars"
+                              />
+                              <label className="ops-opt-check">
+                                <input
+                                  type="checkbox"
+                                  checked={c.hide_price}
+                                  onChange={(e) =>
+                                    setEdChoice(gi, ci, { hide_price: e.target.checked })
+                                  }
+                                />
+                                Hide price
+                              </label>
+                              <button
+                                type="button"
+                                className="ops-btn danger"
+                                disabled={busy}
+                                aria-label={`Delete choice ${c.name || ci + 1}`}
+                                onClick={() => {
+                                  if (
+                                    !window.confirm(
+                                      `Delete the choice "${c.name || "unnamed"}"?`
+                                    )
+                                  )
+                                    return;
+                                  setEdOptions((prev) =>
+                                    prev.map((grp, i) =>
+                                      i === gi
+                                        ? {
+                                            ...grp,
+                                            choices: grp.choices.filter((_, j) => j !== ci),
+                                          }
+                                        : grp
+                                    )
+                                  );
+                                }}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                          <div>
+                            <button
+                              type="button"
+                              className="ops-btn"
+                              disabled={busy || edChoiceTotal >= 30}
+                              onClick={() =>
+                                setEdOptions((prev) =>
+                                  prev.map((grp, i) =>
+                                    i === gi
+                                      ? {
+                                          ...grp,
+                                          choices: [
+                                            ...grp.choices,
+                                            { name: "", price: "0.00", hide_price: false },
+                                          ],
+                                        }
+                                      : grp
+                                  )
+                                )
+                              }
+                            >
+                              Add choice
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                      <div>
+                        <button
+                          type="button"
+                          className="ops-btn"
+                          disabled={busy || edOptions.length >= 10}
+                          onClick={() =>
+                            setEdOptions((prev) => [
+                              ...prev,
+                              {
+                                name: "",
+                                single: false,
+                                choices: [{ name: "", price: "0.00", hide_price: false }],
+                              },
+                            ])
+                          }
+                        >
+                          Add group
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {selectedDish && (
                     <>
                       <div className="ops-field">
@@ -1384,6 +1596,19 @@ export default function AdminPanel() {
                               price_cents,
                               description: edDesc,
                               station: edStation || "main",
+                              // Options editor payload (dollars; the server
+                              // validates and converts to cents). An emptied
+                              // price field becomes NaN -> null in JSON, which
+                              // the server rejects with a clear message.
+                              option_groups: edOptions.map((g) => ({
+                                name: g.name,
+                                ...(g.single ? { single: true } : {}),
+                                choices: g.choices.map((c) => ({
+                                  name: c.name,
+                                  price: c.price.trim() === "" ? NaN : Number(c.price),
+                                  ...(c.hide_price ? { hide_price: true } : {}),
+                                })),
+                              })),
                             },
                             `${edName} saved.`
                           ).catch(() => {});
