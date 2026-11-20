@@ -34,6 +34,22 @@ interface Promotion {
   item_id: string | null;
 }
 
+/** Kitchen printer / print-bridge view (staff state, no secrets). */
+interface PrinterView {
+  paired: boolean;
+  connected: boolean;
+  computer_name: string | null;
+  last_seen_at: string | null;
+  printers: { name: string; is_default: boolean; status: string }[];
+  selected_printer: string | null;
+  copies: number;
+  pairing_code: string | null;
+  pairing_expires_at: string | null;
+  test_pending: boolean;
+  last_error: string | null;
+  parked_count: number;
+}
+
 interface AdminState {
   settings: {
     ordering_enabled: boolean;
@@ -59,6 +75,7 @@ interface AdminState {
     };
     free_delivery: { enabled: boolean; threshold_cents: number };
   };
+  printer?: PrinterView;
   menu: { categories: string[]; items: MenuItem[] };
 }
 
@@ -1694,6 +1711,7 @@ export default function AdminPanel() {
         </div>
       </div>
     );
+    const printer = state.printer;
     const heroPhotoCustom = state.photos[HERO_PHOTO_ID];
     const heroVideo = state.photos[HERO_VIDEO_ID];
     const heroFallbackDish = state.menu.items.find((i) => i.id === "sultani-kabob");
@@ -1905,6 +1923,211 @@ export default function AdminPanel() {
             here in the panel. It applies to new quotes; orders already placed
             keep the fee they were charged.
           </p>
+        </section>
+        <section className="ops-card">
+          <h3>Kitchen printer</h3>
+          {!printer || !printer.paired ? (
+            <>
+              <p className="ops-muted">
+                Paid orders can print by themselves — no browser page left open — through
+                the small <strong>print bridge</strong> program on the kitchen computer.
+                The bridge finds the printers there and reports them here, where you pick
+                the ticket printer.
+              </p>
+              <p className="ops-muted">
+                One-time setup: install the bridge on the kitchen computer (see its
+                README), then generate a pairing code here and type it into the bridge.
+              </p>
+              {printer?.pairing_code ? (
+                <div className="ops-field">
+                  <label>Pairing code — type this into the bridge (expires{" "}
+                    {printer.pairing_expires_at
+                      ? new Date(printer.pairing_expires_at).toLocaleTimeString()
+                      : ""}
+                    )</label>
+                  <div className="printer-code">{printer.pairing_code}</div>
+                </div>
+              ) : null}
+              <button
+                type="button"
+                className="ops-btn primary"
+                disabled={busy}
+                onClick={() =>
+                  act(
+                    { action: "printer_generate_code" },
+                    "Pairing code generated — type it into the bridge on the kitchen computer."
+                  )
+                }
+              >
+                {printer?.pairing_code ? "Generate a new code" : "Generate pairing code"}
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="cart-line">
+                <span>
+                  <span
+                    className={`printer-dot${printer.connected ? " on" : " off"}`}
+                  />{" "}
+                  {printer.connected ? (
+                    <>
+                      Connected — {printer.computer_name ?? "kitchen computer"}
+                    </>
+                  ) : (
+                    <>Not connected{printer.computer_name ? ` — ${printer.computer_name}` : ""}</>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  className="ops-btn"
+                  disabled={busy}
+                  onClick={() => {
+                    if (session?.access_token) loadState(session.access_token);
+                  }}
+                >
+                  Refresh status
+                </button>
+              </div>
+              <p className="ops-muted">
+                {printer.last_seen_at
+                  ? `Last seen ${new Date(printer.last_seen_at).toLocaleString()}. The bridge prints each paid order once, by itself.`
+                  : "The bridge has not checked in yet."}
+              </p>
+              {printer.pairing_code ? (
+                <div className="ops-field">
+                  <label>Pairing code in progress (expires{" "}
+                    {printer.pairing_expires_at
+                      ? new Date(printer.pairing_expires_at).toLocaleTimeString()
+                      : ""}
+                    )</label>
+                  <div className="printer-code">{printer.pairing_code}</div>
+                </div>
+              ) : null}
+              <div className="ops-field">
+                <label>Ticket printer</label>
+                {printer.printers.length === 0 ? (
+                  <p className="ops-muted">
+                    No printers reported yet. Make sure the bridge is running on the
+                    kitchen computer, then press “Search again”.
+                  </p>
+                ) : (
+                  printer.printers.map((p) => (
+                    <label key={p.name} className="printer-row">
+                      <input
+                        type="radio"
+                        name="ticket-printer"
+                        checked={printer.selected_printer === p.name}
+                        disabled={busy}
+                        onChange={() =>
+                          act(
+                            { action: "printer_select", printer: p.name },
+                            `Ticket printer set to ${p.name}.`
+                          )
+                        }
+                      />{" "}
+                      {p.name}
+                      {p.is_default ? " (default)" : ""}{" "}
+                      <span className="ops-muted">{p.status}</span>
+                    </label>
+                  ))
+                )}
+              </div>
+              <div className="ops-field">
+                <label>Copies of each ticket</label>
+                <div className="ops-btn-row">
+                  {[1, 2, 3].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      className={`ops-btn${printer.copies === n ? " primary" : ""}`}
+                      disabled={busy}
+                      onClick={() =>
+                        act(
+                          { action: "printer_set_copies", copies: n },
+                          `Tickets will print ${n} ${n === 1 ? "copy" : "copies"}.`
+                        )
+                      }
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="ops-btn-row">
+                <button
+                  type="button"
+                  className="ops-btn"
+                  disabled={busy}
+                  onClick={() =>
+                    act(
+                      { action: "printer_rescan" },
+                      "The bridge will search for printers again on its next check-in."
+                    )
+                  }
+                >
+                  Search again
+                </button>
+                <button
+                  type="button"
+                  className="ops-btn primary"
+                  disabled={busy || !printer.connected || printer.test_pending}
+                  onClick={() =>
+                    act(
+                      { action: "printer_test_print" },
+                      "Test ticket queued — it prints within a few seconds."
+                    )
+                  }
+                >
+                  Test print
+                </button>
+                <button
+                  type="button"
+                  className="ops-btn"
+                  disabled={busy}
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        "Disconnect the print bridge? It will stop printing until it is paired again with a new code."
+                      )
+                    )
+                      return;
+                    act(
+                      { action: "printer_revoke" },
+                      "Print bridge disconnected — pair it again with a new code when ready."
+                    );
+                  }}
+                >
+                  Revoke / re-pair
+                </button>
+              </div>
+              {!printer.connected ? (
+                <p className="ops-muted">
+                  Test print needs the bridge connected — start the bridge program on the
+                  kitchen computer first.
+                </p>
+              ) : null}
+              {printer.test_pending ? (
+                <p className="ops-muted">
+                  A test ticket is queued — the bridge prints it on its next check-in
+                  (a few seconds).
+                </p>
+              ) : null}
+              {printer.parked_count > 0 ? (
+                <p className="ops-muted">
+                  {printer.parked_count} order ticket{printer.parked_count === 1 ? "" : "s"}{" "}
+                  failed 3 times and stopped retrying — check the printer (paper, power,
+                  cable), then use Test print. New orders still print.
+                </p>
+              ) : null}
+              {printer.last_error ? (
+                <p className="printer-error">Last bridge error: {printer.last_error}</p>
+              ) : null}
+              <p className="ops-muted">
+                The kitchen page and Fresh KDS keep working as before — if the bridge is
+                off, orders still appear there and nothing is lost.
+              </p>
+            </>
+          )}
         </section>
         <section className="ops-card">
           <h3>Free delivery promotion</h3>
