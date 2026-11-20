@@ -42,11 +42,20 @@ import {
   setFreeDeliverySettings,
   setServiceFeeSettings,
 } from "@/lib/fees";
+import {
+  generatePairingCode,
+  getPrinterAdminView,
+  queueTestPrint,
+  requestRescan,
+  revokeBridge,
+  selectPrinter,
+  setPrinterCopies,
+} from "@/lib/printer";
 
 export const dynamic = "force-dynamic";
 
 async function staffState() {
-  const [settings, unavailable, promotions, photos, menu, hours, delivery, fees] =
+  const [settings, unavailable, promotions, photos, menu, hours, delivery, fees, printer] =
     await Promise.all([
       getSettings(),
       getUnavailableIds(),
@@ -56,6 +65,7 @@ async function staffState() {
       getHoursConfig(),
       getDeliverySettings(),
       getFeeSettings(),
+      getPrinterAdminView(),
     ]);
   return {
     settings,
@@ -77,6 +87,10 @@ async function staffState() {
       service_fee: fees.service_fee,
       free_delivery: fees.free_delivery,
     },
+    // Kitchen printer / print bridge (staff view only — the bridge
+    // token hash and pairing internals never leave lib/printer.ts;
+    // this view carries no secrets).
+    printer,
     menu: { categories: menu.categories, items: menu.items },
   };
 }
@@ -268,6 +282,46 @@ export async function POST(req: Request) {
         }
         await setFreeDeliverySettings({ enabled, threshold_cents });
         await logAudit(actor, "admin.set_free_delivery", { enabled, threshold_cents });
+        break;
+      }
+      case "printer_generate_code": {
+        // Opens a 15-minute pairing window for the print bridge. The
+        // code itself is shown by the card (it reads it back from the
+        // staff state); the audit log records only that one was made.
+        const { expires_at } = await generatePairingCode();
+        await logAudit(actor, "printer.pairing_code", { expires_at });
+        break;
+      }
+      case "printer_revoke": {
+        // Revoke / re-pair: invalidates the bridge token and clears
+        // the bridge state. The bridge must pair again with a new code.
+        await revokeBridge();
+        await logAudit(actor, "printer.pairing_reset", {});
+        break;
+      }
+      case "printer_select": {
+        const name = String(body.printer ?? "").trim().slice(0, 120);
+        await selectPrinter(name || null);
+        await logAudit(actor, "printer.select", { printer: name || null });
+        break;
+      }
+      case "printer_rescan": {
+        await requestRescan();
+        await logAudit(actor, "printer.rescan", {});
+        break;
+      }
+      case "printer_set_copies": {
+        const copies = Math.floor(Number(body.copies));
+        if (!Number.isFinite(copies) || copies < 1 || copies > 3) {
+          throw new Error("Copies must be 1, 2 or 3.");
+        }
+        await setPrinterCopies(copies);
+        await logAudit(actor, "printer.set_copies", { copies });
+        break;
+      }
+      case "printer_test_print": {
+        await queueTestPrint();
+        await logAudit(actor, "printer.test_print", {});
         break;
       }
       case "set_availability": {
