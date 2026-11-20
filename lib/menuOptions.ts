@@ -85,7 +85,110 @@ export function sanitizeOptionGroups(raw: unknown): OptionGroup[] | undefined {
       });
     }
   }
-  return groups.length > 0 ? groups : undefined;
+  if (groups.length > 0) return groups;
+  // An explicitly stored EMPTY array means "staff removed every option"
+  // (the admin options editor saves [] then) and must NOT fall back to
+  // the built-in groups. A non-empty value that sanitizes to nothing is
+  // treated as missing, exactly as before.
+  return raw.length === 0 ? [] : undefined;
+}
+
+// ---- Admin options editor ---------------------------------------------------
+// The panel editor sends groups in a dollars-based wire shape:
+//   [{ name, single?, choices: [{ name, price, hide_price? }] }]
+// where `price` is the DOLLARS amount the staff member typed. Saving is
+// STRICT (unlike sanitizeOptionGroups above, the lenient read path): any
+// problem rejects the whole save with a clear message, so a bad edit can
+// never partially land or break storefront pricing.
+
+export const MAX_OPTION_GROUPS = 10;
+export const MAX_OPTION_CHOICES_PER_DISH = 30;
+export const MAX_CHOICE_PRICE_DOLLARS = 999.99;
+
+/**
+ * Validates editor-sent option groups and returns them in the stored
+ * OptionGroup shape (integer cents, flags present only when true,
+ * unknown fields stripped). Throws an Error with a staff-readable
+ * message on the first problem found.
+ */
+export function validateEditorOptionGroups(raw: unknown): OptionGroup[] {
+  if (!Array.isArray(raw)) {
+    throw new Error("Options must be a list of groups.");
+  }
+  if (raw.length > MAX_OPTION_GROUPS) {
+    throw new Error(`A dish can have at most ${MAX_OPTION_GROUPS} option groups.`);
+  }
+  const groups: OptionGroup[] = [];
+  const groupNames = new Set<string>();
+  let totalChoices = 0;
+  for (const g of raw as Record<string, unknown>[]) {
+    if (!g || typeof g !== "object") {
+      throw new Error("An option group is malformed.");
+    }
+    const name = typeof g.name === "string" ? g.name.trim() : "";
+    if (!name) throw new Error("Every option group needs a name.");
+    if (name.length > 60) {
+      throw new Error(`Group name "${name}" is too long (60 characters max).`);
+    }
+    if (groupNames.has(name)) {
+      throw new Error(
+        `Two option groups are named "${name}" — group names must be unique per dish.`
+      );
+    }
+    groupNames.add(name);
+    if (!Array.isArray(g.choices) || g.choices.length === 0) {
+      throw new Error(
+        `Group "${name}" needs at least one choice — add one or delete the group.`
+      );
+    }
+    const choices: OptionChoice[] = [];
+    const choiceNames = new Set<string>();
+    for (const c of g.choices as Record<string, unknown>[]) {
+      if (!c || typeof c !== "object") {
+        throw new Error(`A choice in group "${name}" is malformed.`);
+      }
+      const choiceName = typeof c.name === "string" ? c.name.trim() : "";
+      if (!choiceName) {
+        throw new Error(`Every choice in group "${name}" needs a name.`);
+      }
+      if (choiceName.length > 120) {
+        throw new Error(`Choice name "${choiceName}" is too long (120 characters max).`);
+      }
+      if (choiceNames.has(choiceName)) {
+        throw new Error(`Group "${name}" has two choices named "${choiceName}".`);
+      }
+      choiceNames.add(choiceName);
+      const dollars = typeof c.price === "number" ? c.price : NaN;
+      if (!Number.isFinite(dollars)) {
+        throw new Error(`Enter a valid price for "${choiceName}" in group "${name}".`);
+      }
+      if (dollars < 0) {
+        throw new Error(`The price for "${choiceName}" cannot be negative.`);
+      }
+      if (dollars > MAX_CHOICE_PRICE_DOLLARS) {
+        throw new Error(
+          `The price for "${choiceName}" is too high (max $${MAX_CHOICE_PRICE_DOLLARS}).`
+        );
+      }
+      totalChoices += 1;
+      if (totalChoices > MAX_OPTION_CHOICES_PER_DISH) {
+        throw new Error(
+          `A dish can have at most ${MAX_OPTION_CHOICES_PER_DISH} choices in total.`
+        );
+      }
+      choices.push({
+        name: choiceName,
+        price_delta_cents: Math.round(dollars * 100),
+        ...(c.hide_price === true ? { hide_price: true } : {}),
+      });
+    }
+    groups.push({
+      name,
+      ...(g.single === true ? { single: true } : {}),
+      choices,
+    });
+  }
+  return groups;
 }
 
 /**

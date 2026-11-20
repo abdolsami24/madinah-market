@@ -10,6 +10,7 @@ import { denverParts } from "./hours";
 import { adminStatusLabel, statusFilterStatuses } from "./kitchenStatus";
 import { getDbMenu } from "./menuDb";
 import { getDishPhotos, getUnavailableIds } from "./admin";
+import type { OptionGroup } from "./menuOptions";
 import type { OrderLine } from "./pricing";
 
 export const PAID_STATUSES = ["paid", "test_paid"];
@@ -383,6 +384,8 @@ export interface CatalogItem {
   category: string;
   image: string;
   station: string;
+  /** Effective option groups (DB value, else the built-in fallback). */
+  option_groups: OptionGroup[];
 }
 
 export interface CatalogData {
@@ -436,6 +439,7 @@ export async function getCatalog(): Promise<CatalogData> {
       category: i.category,
       image: i.image,
       station: stations.get(i.id) ?? "main",
+      option_groups: i.option_groups ?? [],
     })),
     unavailable: [...unavailable],
     photos,
@@ -449,6 +453,13 @@ export interface MenuItemEdit {
   price_cents: number;
   description: string;
   station: string;
+  /**
+   * Validated option groups to store with the dish. Undefined leaves
+   * the stored groups untouched; an empty array means "no options"
+   * (the storefront honours an explicitly empty list — see
+   * sanitizeOptionGroups).
+   */
+  option_groups?: OptionGroup[];
 }
 
 /** True when a PostgREST error is about the not-yet-added station column. */
@@ -465,14 +476,22 @@ export async function updateMenuItem(id: string, edit: MenuItemEdit): Promise<vo
     price_cents: edit.price_cents,
     description: edit.description,
   };
+  // Option groups ride along only when the editor sent them; the
+  // station fallback below drops ONLY the station, never the options.
+  const extras: { option_groups?: OptionGroup[] } = {};
+  if (edit.option_groups !== undefined) extras.option_groups = edit.option_groups;
   let res = await supabase
     .from("menu_items")
-    .update({ ...base, station: edit.station || "main" })
+    .update({ ...base, station: edit.station || "main", ...extras })
     .eq("id", id)
     .select("id");
   if (res.error && stationColumnMissing(res.error)) {
     // Migration not run yet — save everything except the station.
-    res = await supabase.from("menu_items").update(base).eq("id", id).select("id");
+    res = await supabase
+      .from("menu_items")
+      .update({ ...base, ...extras })
+      .eq("id", id)
+      .select("id");
   }
   if (res.error) throw res.error;
   if (!res.data || res.data.length === 0) {
