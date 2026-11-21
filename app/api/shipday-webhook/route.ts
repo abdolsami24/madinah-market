@@ -1,77 +1,93 @@
 // POST /api/shipday-webhook
-// Receives delivery status callbacks from Shipday. Protected by the shared
-// token in SHIPDAY_WEBHOOK_TOKEN (send it as ?token=... or the
-// "x-shipday-token" header, matching how it is registered in Shipday).
-// Always answers 200 {"ok":true}. Never changes money or items — it only
-// records the latest delivery status text on the order.
+//
+// Shipday calls this whenever a delivery's status changes ("Order
+// Status Update" webhook — payload documented at
+// docs.shipday.com/reference/order-status-update-2):
+//   { event, order_status, order: { id, order_number, ... }, ... }
+// The handler is tolerant: it also reads the flat payload shapes
+// older integrations send, and unknown events are ignored with a
+// 200 — an unrecognized payload NEVER changes an order (and in
+// particular never marks one delivered).
+//
+// Recognized statuses are mapped onto orders.delivery_status (the
+// canonical vocabulary in lib/deliveryStatus.ts) so the customer's
+// /track page and the admin panel show progress, and the "delivered"
+// SMS fires exactly once — the same shared path DoorDash uses.
+//
+// Token check: when SHIPDAY_WEBHOOK_TOKEN is set in the environment,
+// the call must carry it — Shipday sends the validation token in a
+// header named "token" when one is configured in their dashboard;
+// the legacy "x-shipday-token" header and a ?token= query are also
+// accepted. A mismatch is a closed 401 rejection. When the token is
+// NOT set, payloads are still processed (the lookup keys are
+// Shipday's own order id / our order number) — setting the token is
+// recommended; see the update README.
+//
+// The route ALWAYS answers 200 once a payload was understood or
+// safely ignored, so Shipday does not retry storms; it never throws.
 
+import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
-import { getServiceClient, supabaseConfigured } from "@/lib/supabase/server";
+import { supabaseConfigured } from "@/lib/supabase/server";
+import { parseShipdayWebhookPayload } from "@/lib/shipday";
+import { applyShipdayStatus } from "@/lib/delivery";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function pickString(obj: Record<string, unknown>, keys: string[]): string {
-  for (const key of keys) {
-    const value = obj[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-    if (typeof value === "number") return String(value);
-  }
-  return "";
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
+}
+
+function tokenOk(req: Request): boolean {
+  const expected = (process.env.SHIPDAY_WEBHOOK_TOKEN ?? "").trim();
+  if (!expected) return true; // no token configured — see header note
+  const url = new URL(req.url);
+  const provided =
+    req.headers.get("token") ??
+    req.headers.get("x-shipday-token") ??
+    url.searchParams.get("token") ??
+    "";
+  return safeEqual(provided.trim(), expected);
 }
 
 export async function POST(req: Request) {
-  const expected = process.env.SHIPDAY_WEBHOOK_TOKEN;
-  const url = new URL(req.url);
-  const provided = url.searchParams.get("token") ?? req.headers.get("x-shipday-token") ?? "";
-  const tokenOk = Boolean(expected) && provided === expected;
-  console.log(`[shipday-webhook] token:${tokenOk ? "match" : expected ? "mismatch" : "absent"}`);
-
-  let payload: Record<string, unknown> = {};
+  if (!tokenOk(req)) {
+    return NextResponse.json({ error: "unverified" }, { status: 401 });
+  }
+  let payload: unknown = null;
   try {
-    payload = (await req.json()) as Record<string, unknown>;
+    payload = await req.json();
   } catch {
-    console.log("[shipday-webhook] non-JSON payload ignored");
-    return NextResponse.json({ ok: true });
+    // Not JSON — nothing to apply; answer 200 so Shipday stops.
+    return NextResponse.json({ ok: true, ignored: "not_json" });
   }
-  // Log the payload (status fields only — no secrets are ever in it).
-  console.log("[shipday-webhook] payload:", JSON.stringify(payload).slice(0, 1000));
-
-  if (!tokenOk || !supabaseConfigured()) {
-    return NextResponse.json({ ok: true });
+  const parsed = parseShipdayWebhookPayload(payload);
+  if (!parsed) {
+    return NextResponse.json({ ok: true, ignored: "bad_payload" });
   }
-
-  const status = pickString(payload, [
-    "orderStatus",
-    "status",
-    "deliveryStatus",
-    "event",
-    "state",
-  ]);
-  const orderNumber = pickString(payload, ["orderNumber", "order_number", "orderNo"]);
-  const shipdayId = pickString(payload, ["orderId", "order_id", "shipdayOrderId"]);
-
-  if (status) {
-    try {
-      const supabase = getServiceClient();
-      const value = `Shipday: ${status}`;
-      let updated = false;
-      if (orderNumber && /^\d+$/.test(orderNumber)) {
-        const { data } = await supabase
-          .from("orders")
-          .update({ shipday_status: value })
-          .eq("id", Number(orderNumber))
-          .select("id");
-        updated = Boolean(data && data.length > 0);
-      }
-      if (!updated && shipdayId) {
-        await supabase
-          .from("orders")
-          .update({ shipday_status: value })
-          .eq("shipday_order_id", shipdayId);
-      }
-    } catch (err) {
-      console.error("[shipday-webhook] update failed:", err);
-    }
+  if (!parsed.canonical) {
+    // Unknown event/status — change nothing, by design.
+    return NextResponse.json({ ok: true, ignored: "unknown_status" });
   }
-  return NextResponse.json({ ok: true });
+  if (!parsed.shipdayId && !parsed.orderNumber) {
+    return NextResponse.json({ ok: true, ignored: "no_order_ref" });
+  }
+  if (!supabaseConfigured()) {
+    return NextResponse.json({ ok: true, ignored: "no_database" });
+  }
+  try {
+    const applied = await applyShipdayStatus({
+      shipdayId: parsed.shipdayId,
+      orderNumber: parsed.orderNumber,
+      rawStatus: parsed.rawStatus,
+      canonical: parsed.canonical,
+    });
+    return NextResponse.json({ ok: true, applied });
+  } catch (err) {
+    console.error("[shipday-webhook] apply failed:", err);
+    return NextResponse.json({ ok: true, applied: false });
+  }
 }
