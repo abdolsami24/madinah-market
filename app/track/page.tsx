@@ -4,6 +4,11 @@
 // phone used at checkout; /api/track-order only returns the order when
 // the phone's last 10 digits match. The page refreshes every 20 seconds
 // and draws a friendly timeline for pickup or delivery.
+//
+// One-tap tracking (usability item 5): arriving from the storefront's
+// confirmation banner (/track?order=N) in the same tab, the page finds
+// the just-placed order's phone in the storefront's sessionStorage
+// snapshot (lib/lastOrder.ts) and runs the lookup immediately.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -14,6 +19,7 @@ import {
   deliveryStepIndex,
   deliveryIsFailed,
 } from "@/lib/deliveryStatus";
+import { LAST_ORDER_KEY, resolveTrackAutoLookup } from "@/lib/lastOrder";
 
 interface TrackedOrder {
   id: number;
@@ -84,6 +90,7 @@ export default function TrackPage() {
   const [message, setMessage] = useState("");
   const [searching, setSearching] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoRanRef = useRef(false);
 
   const lookup = useCallback(
     async (id: string, ph: string, silent = false) => {
@@ -114,11 +121,29 @@ export default function TrackPage() {
   );
 
   // Prefill from ?order= (the storefront success banner links here).
+  // When the snapshot from that same checkout is still in this tab,
+  // prefill the phone too and run the lookup once — no typing, no tap.
+  // Anything missing → the plain form, exactly as before. A failed
+  // auto-lookup leaves the form visible and prefilled with the usual
+  // "couldn't find that order" message (handled inside lookup).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const o = params.get("order");
     if (o) setOrderId(o);
-  }, []);
+    if (autoRanRef.current) return;
+    let raw: string | null = null;
+    try {
+      raw = sessionStorage.getItem(LAST_ORDER_KEY);
+    } catch {
+      /* storage unavailable — plain form */
+    }
+    const auto = resolveTrackAutoLookup(o, raw);
+    if (auto) {
+      autoRanRef.current = true;
+      setPhone(auto.phone);
+      lookup(auto.orderId, auto.phone);
+    }
+  }, [lookup]);
 
   // Auto-refresh every 20 seconds once an order is shown.
   useEffect(() => {
