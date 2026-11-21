@@ -5,7 +5,8 @@
 import { getServiceClient } from "./supabase/server";
 import { notifyOwner, type NotifyOrder } from "./email";
 import type { ShipdayOrder } from "./shipday";
-import { dispatchDeliveryForOrder } from "./delivery";
+import { dispatchShipdayForOrder } from "./shipday";
+import { dispatchDeliveryForOrder, getDeliverySettings } from "./delivery";
 import { smsOrderConfirmed } from "./sms";
 import { sendOrderToFreshKds } from "./freshkds";
 import { earnPointsForPaidOrder } from "./points";
@@ -112,23 +113,32 @@ export async function markOrderPaid(
     console.error("[orders] owner notification failed:", err);
   }
 
-  // DoorDash Drive dispatch for delivery orders (Stage 3 — DoorDash
-  // replaced Shipday as the only delivery provider). Best-effort and
-  // idempotent: a failure leaves the order PAID with delivery_status
-  // 'pending' + delivery_error for the admin Retry button; it never
-  // fails the customer's payment.
+  // Delivery dispatch for delivery orders, via the ACTIVE provider
+  // (Admin → Operations → Delivery; default DoorDash Drive).
+  // DoorDash (Stage 3): best-effort and idempotent — a failure leaves
+  // the order PAID with delivery_status 'pending' + delivery_error
+  // for the admin Retry button; it never fails the customer's payment.
+  // Shipday (provider switch): flat-fee dispatch via lib/shipday.ts;
+  // test orders are never really sent (Shipday has no sandbox).
   if (updated.fulfillment === "delivery") {
     try {
-      await dispatchDeliveryForOrder(updated);
+      const deliverySettings = await getDeliverySettings();
+      if (deliverySettings.provider === "shipday") {
+        await dispatchShipdayForOrder(updated);
+      } else {
+        await dispatchDeliveryForOrder(updated);
+      }
       const fresh = await getOrder(orderId).catch(() => null);
       if (fresh) {
         updated.delivery_provider = fresh.delivery_provider;
         updated.delivery_external_id = fresh.delivery_external_id;
         updated.delivery_status = fresh.delivery_status;
         updated.delivery_error = fresh.delivery_error;
+        updated.shipday_order_id = fresh.shipday_order_id;
+        updated.shipday_status = fresh.shipday_status;
       }
     } catch (err) {
-      console.error("[orders] DoorDash dispatch failed:", err);
+      console.error("[orders] delivery dispatch failed:", err);
     }
   }
 

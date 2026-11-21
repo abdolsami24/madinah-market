@@ -49,3 +49,35 @@ export function computeDeliveryMarkupCents(
   const pct = Number.isFinite(percent) ? Math.min(Math.max(percent, 0), 100) : 0;
   return flat + Math.round((Math.max(0, quoteFeeCents) * pct) / 100);
 }
+
+// ---- Delivery provider switch (DoorDash Drive vs Shipday) -------------------
+// Admin → Operations picks ONE active provider (site_settings key
+// delivery_provider, default 'doordash'). DoorDash mode is the Stage 3
+// behavior: a stored quote is required at checkout and the customer
+// pays the quoted fee + markup. Shipday mode has NO quote: the
+// customer pays one flat fee (shipday_delivery_fee_cents, default
+// $6.99) and Shipday bills the restaurant per delivery on its own
+// account. These helpers are pure so the branch decisions can be
+// unit-checked exactly like the fee math above.
+
+export type DeliveryProviderName = "doordash" | "shipday";
+
+/** Default flat delivery fee charged to the customer in Shipday mode. */
+export const DEFAULT_SHIPDAY_FEE_CENTS = 699;
+
+/** Anything that is not exactly 'shipday' means DoorDash (the default). */
+export function parseDeliveryProvider(value: unknown): DeliveryProviderName {
+  return value === "shipday" ? "shipday" : "doordash";
+}
+
+/** Clamps a stored/admin-entered Shipday flat fee to a sane cent amount. */
+export function normalizeShipdayFeeCents(value: unknown, fallback = DEFAULT_SHIPDAY_FEE_CENTS): number {
+  const n = typeof value === "string" ? Number(value) : (value as number);
+  if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return fallback;
+  return Math.min(Math.round(n), 100000);
+}
+
+/** Only DoorDash mode needs a stored quote before checkout. */
+export function needsDeliveryQuote(provider: DeliveryProviderName): boolean {
+  return provider === "doordash";
+}

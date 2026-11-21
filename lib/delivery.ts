@@ -18,10 +18,12 @@ import {
   mockNextStatus,
   doordashMode,
 } from "./doordash";
-import { computeDeliveryMarkupCents, DOORDASH_MAX_MILES } from "./deliveryPricing";
+import { computeDeliveryMarkupCents, DOORDASH_MAX_MILES, normalizeShipdayFeeCents, parseDeliveryProvider, type DeliveryProviderName } from "./deliveryPricing";
 import { smsDeliveryDelivered } from "./sms";
 
 // ---- Settings (site_settings, same pattern as the hours editor) -------------
+
+export type DeliveryProvider = DeliveryProviderName;
 
 export interface DeliverySettings {
   /** Site delivery radius cap in miles (food quality). Default 8. */
@@ -32,6 +34,14 @@ export interface DeliverySettings {
   markup_flat_cents: number;
   /** Extra fee as % of the DoorDash fee. 0 = off. */
   markup_percent: number;
+  /**
+   * Active delivery provider (provider switch): 'doordash' (default —
+   * Stage 3 behavior) or 'shipday' (flat fee, no quote; dispatch via
+   * lib/shipday.ts). Switching affects NEW paid orders only.
+   */
+  provider: DeliveryProvider;
+  /** Flat delivery fee charged to the customer in Shipday mode, cents. */
+  shipday_fee_cents: number;
 }
 
 export const DEFAULT_DELIVERY_SETTINGS: DeliverySettings = {
@@ -39,6 +49,8 @@ export const DEFAULT_DELIVERY_SETTINGS: DeliverySettings = {
   min_subtotal_cents: 0,
   markup_flat_cents: 0,
   markup_percent: 0,
+  provider: "doordash",
+  shipday_fee_cents: 699,
 };
 
 const DELIVERY_SETTING_KEYS = [
@@ -46,6 +58,8 @@ const DELIVERY_SETTING_KEYS = [
   "delivery_min_subtotal_cents",
   "delivery_markup_flat_cents",
   "delivery_markup_percent",
+  "delivery_provider",
+  "shipday_delivery_fee_cents",
 ] as const;
 
 function numValue(value: unknown, fallback: number): number {
@@ -77,6 +91,12 @@ export async function getDeliverySettings(): Promise<DeliverySettings> {
         case "delivery_markup_percent":
           settings.markup_percent = Math.min(numValue(v, 0), 100);
           break;
+        case "delivery_provider":
+          settings.provider = parseDeliveryProvider(v);
+          break;
+        case "shipday_delivery_fee_cents":
+          settings.shipday_fee_cents = normalizeShipdayFeeCents(v, settings.shipday_fee_cents);
+          break;
       }
     }
   } catch {
@@ -93,6 +113,12 @@ export async function setDeliverySettings(input: DeliverySettings): Promise<void
     { key: "delivery_min_subtotal_cents", value: input.min_subtotal_cents, updated_at: now },
     { key: "delivery_markup_flat_cents", value: input.markup_flat_cents, updated_at: now },
     { key: "delivery_markup_percent", value: input.markup_percent, updated_at: now },
+    { key: "delivery_provider", value: parseDeliveryProvider(input.provider), updated_at: now },
+    {
+      key: "shipday_delivery_fee_cents",
+      value: normalizeShipdayFeeCents(input.shipday_fee_cents),
+      updated_at: now,
+    },
   ];
   const { error } = await supabase
     .from("site_settings")
@@ -397,6 +423,68 @@ export async function applyDeliveryStatusByExternalId(
       .maybeSingle();
     if (error || !data) return false;
     await applyDeliveryStatus(data as DeliveryOrderLike, rawStatus);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Shipday webhook counterpart of applyDeliveryStatusByExternalId:
+ * finds the order by its Shipday id (falling back to Shipday's
+ * order_number, which is OUR order id), records the raw Shipday text
+ * on shipday_status, and applies the canonical status through the
+ * shared path (so the delivered SMS fires exactly once, as with
+ * DoorDash). An order explicitly recorded as a DoorDash order is
+ * never touched. Returns false when nothing matched.
+ */
+export async function applyShipdayStatus(input: {
+  shipdayId: string;
+  orderNumber: string;
+  rawStatus: string;
+  canonical: string;
+}): Promise<boolean> {
+  try {
+    const supabase = getServiceClient();
+    let order: Record<string, unknown> | null = null;
+    if (input.shipdayId) {
+      const { data } = await supabase
+        .from("orders")
+        .select("id, customer_phone, fulfillment, delivery_status, delivery_provider")
+        .eq("shipday_order_id", input.shipdayId)
+        .maybeSingle();
+      order = (data as Record<string, unknown>) ?? null;
+    }
+    if (!order && input.orderNumber && /^\d+$/.test(input.orderNumber)) {
+      const { data } = await supabase
+        .from("orders")
+        .select("id, customer_phone, fulfillment, delivery_status, delivery_provider")
+        .eq("id", Number(input.orderNumber))
+        .maybeSingle();
+      const candidate = (data as Record<string, unknown>) ?? null;
+      if (
+        candidate &&
+        candidate.fulfillment === "delivery" &&
+        candidate.delivery_provider !== "doordash"
+      ) {
+        order = candidate;
+      }
+    }
+    if (!order) return false;
+    if (input.rawStatus) {
+      try {
+        await supabase
+          .from("orders")
+          .update({ shipday_status: `Shipday: ${input.rawStatus}`.slice(0, 200) })
+          .eq("id", order.id as number);
+      } catch {
+        /* the canonical status below is what matters */
+      }
+    }
+    await applyDeliveryStatus(
+      order as { id: number; customer_phone: string | null; fulfillment: string; delivery_status?: string | null },
+      input.canonical
+    );
     return true;
   } catch {
     return false;

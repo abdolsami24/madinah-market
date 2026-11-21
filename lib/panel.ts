@@ -42,6 +42,8 @@ export interface PanelOrder {
   payment_status: string;
   kitchen_status: string;
   shipday_status: string | null;
+  /** Shipday's own order id — set when Shipday dispatched the order. */
+  shipday_order_id?: string | null;
   created_at: string;
   // Stage 3 (DoorDash) — present once supabase/stage3-schema.sql has
   // run; undefined on a not-yet-migrated database.
