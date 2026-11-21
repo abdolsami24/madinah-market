@@ -68,6 +68,9 @@ interface AdminState {
     min_subtotal_cents: number;
     markup_flat_cents: number;
     markup_percent: number;
+    /** Provider switch — absent in older payloads = DoorDash. */
+    provider?: string;
+    shipday_fee_cents?: number;
   };
   fees?: {
     service_fee: {
@@ -113,6 +116,8 @@ interface PanelOrder {
   payment_status: string;
   kitchen_status: string;
   shipday_status: string | null;
+  /** Shipday's own order id — set when Shipday dispatched the order. */
+  shipday_order_id?: string | null;
   created_at: string;
   // Stage 3 (DoorDash) — absent until supabase/stage3-schema.sql runs.
   delivery_provider?: string | null;
@@ -354,11 +359,14 @@ export default function AdminPanel() {
   const [hDeliverySunOpen, setHDeliverySunOpen] = useState("");
   const [hDeliverySunClose, setHDeliverySunClose] = useState("");
 
-  // Delivery settings form (Stage 3 — DoorDash).
+  // Delivery settings form (Stage 3 — DoorDash; provider switch adds
+  // the active-provider choice + the Shipday flat fee).
   const [dlMaxMiles, setDlMaxMiles] = useState("8");
   const [dlMinSubtotal, setDlMinSubtotal] = useState("0");
   const [dlMarkupFlat, setDlMarkupFlat] = useState("0");
   const [dlMarkupPercent, setDlMarkupPercent] = useState("0");
+  const [dlProvider, setDlProvider] = useState<"doordash" | "shipday">("doordash");
+  const [dlShipdayFee, setDlShipdayFee] = useState("6.99");
 
   useEffect(() => {
     if (!state?.delivery) return;
@@ -366,6 +374,8 @@ export default function AdminPanel() {
     setDlMinSubtotal(String(state.delivery.min_subtotal_cents / 100));
     setDlMarkupFlat(String(state.delivery.markup_flat_cents / 100));
     setDlMarkupPercent(String(state.delivery.markup_percent));
+    setDlProvider(state.delivery.provider === "shipday" ? "shipday" : "doordash");
+    setDlShipdayFee(String((state.delivery.shipday_fee_cents ?? 699) / 100));
   }, [state]);
 
   // Service Fee + Free Delivery forms.
@@ -927,7 +937,7 @@ export default function AdminPanel() {
                   )}
                   {selectedOrder.shipday_status && (
                     <>
-                      <span>Shipday (legacy)</span>
+                      <span>Shipday status</span>
                       <strong>{selectedOrder.shipday_status}</strong>
                     </>
                   )}
@@ -935,35 +945,58 @@ export default function AdminPanel() {
                 {selectedOrder.fulfillment === "delivery" && (
                   <>
                     <h3>
-                      Delivery — DoorDash Drive{" "}
-                      {selectedOrder.delivery_quote?.provider_mode === "mock" && (
-                        <span className="ops-chip">MOCK — simulated, not real DoorDash</span>
-                      )}
-                      {selectedOrder.delivery_quote?.provider_mode === "live" && (
-                        <span className="ops-chip">LIVE</span>
-                      )}
+                      Delivery —{" "}
+                      {selectedOrder.delivery_provider === "shipday"
+                        ? "Shipday"
+                        : "DoorDash Drive"}{" "}
+                      {selectedOrder.delivery_provider !== "shipday" &&
+                        selectedOrder.delivery_quote?.provider_mode === "mock" && (
+                          <span className="ops-chip">MOCK — simulated, not real DoorDash</span>
+                        )}
+                      {selectedOrder.delivery_provider !== "shipday" &&
+                        selectedOrder.delivery_quote?.provider_mode === "live" && (
+                          <span className="ops-chip">LIVE</span>
+                        )}
                     </h3>
                     <div className="ops-detail-grid">
                       <span>Provider</span>
                       <strong>
-                        {selectedOrder.delivery_provider === "doordash"
-                          ? "DoorDash Drive"
-                          : "Not dispatched yet"}
-                        {selectedOrder.delivery_quote
+                        {selectedOrder.delivery_provider === "shipday"
+                          ? "Shipday"
+                          : selectedOrder.delivery_provider === "doordash"
+                            ? "DoorDash Drive"
+                            : "Not dispatched yet"}
+                        {selectedOrder.delivery_provider !== "shipday" &&
+                        selectedOrder.delivery_quote
                           ? ` (${selectedOrder.delivery_quote.provider_mode})`
                           : ""}
                       </strong>
-                      <span>Delivery ID</span>
-                      <strong className="ops-mono">
-                        {selectedOrder.delivery_external_id ?? "—"}
-                      </strong>
+                      {selectedOrder.delivery_provider === "shipday" ? (
+                        <>
+                          <span>Shipday order ID</span>
+                          <strong className="ops-mono">
+                            {selectedOrder.shipday_order_id ?? "—"}
+                          </strong>
+                        </>
+                      ) : (
+                        <>
+                          <span>Delivery ID</span>
+                          <strong className="ops-mono">
+                            {selectedOrder.delivery_external_id ?? "—"}
+                          </strong>
+                        </>
+                      )}
                       <span>Delivery status</span>
                       <strong>
                         {selectedOrder.delivery_status
                           ? `${deliveryStatusLabel(selectedOrder.delivery_status)} (${selectedOrder.delivery_status})`
                           : "—"}
                       </strong>
-                      <span>DoorDash fee</span>
+                      <span>
+                        {selectedOrder.delivery_provider === "shipday"
+                          ? "Delivery fee (flat)"
+                          : "DoorDash fee"}
+                      </span>
                       <strong>
                         {formatCents(
                           selectedOrder.delivery_quote?.fee_cents ??
@@ -1013,43 +1046,45 @@ export default function AdminPanel() {
                         </>
                       )}
                     </div>
-                    <div className="ops-btn-row">
-                      {(selectedOrder.payment_status === "paid" ||
-                        selectedOrder.payment_status === "test_paid") &&
-                        (!selectedOrder.delivery_external_id ||
-                          selectedOrder.delivery_status === "pending") && (
+                    {selectedOrder.delivery_provider !== "shipday" && (
+                      <div className="ops-btn-row">
+                        {(selectedOrder.payment_status === "paid" ||
+                          selectedOrder.payment_status === "test_paid") &&
+                          (!selectedOrder.delivery_external_id ||
+                            selectedOrder.delivery_status === "pending") && (
+                            <button
+                              type="button"
+                              className="ops-btn primary"
+                              disabled={busy}
+                              onClick={() =>
+                                deliveryAct(
+                                  selectedOrder.id,
+                                  "retry",
+                                  `Delivery for order #${selectedOrder.id} dispatched to DoorDash.`
+                                )
+                              }
+                            >
+                              Retry delivery dispatch
+                            </button>
+                          )}
+                        {selectedOrder.delivery_external_id && (
                           <button
                             type="button"
-                            className="ops-btn primary"
+                            className="ops-btn"
                             disabled={busy}
                             onClick={() =>
                               deliveryAct(
                                 selectedOrder.id,
-                                "retry",
-                                `Delivery for order #${selectedOrder.id} dispatched to DoorDash.`
+                                "refresh",
+                                `Delivery status for order #${selectedOrder.id} refreshed.`
                               )
                             }
                           >
-                            Retry delivery dispatch
+                            Refresh delivery status
                           </button>
                         )}
-                      {selectedOrder.delivery_external_id && (
-                        <button
-                          type="button"
-                          className="ops-btn"
-                          disabled={busy}
-                          onClick={() =>
-                            deliveryAct(
-                              selectedOrder.id,
-                              "refresh",
-                              `Delivery status for order #${selectedOrder.id} refreshed.`
-                            )
-                          }
-                        >
-                          Refresh delivery status
-                        </button>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </>
                 )}
                 <h3>Fresh KDS</h3>
@@ -1880,9 +1915,35 @@ export default function AdminPanel() {
           </p>
         </section>
         <section className="ops-card">
-          <h3>Delivery — DoorDash Drive</h3>
+          <h3>Delivery</h3>
           <div className="ops-field">
-            <label htmlFor="dl-max-miles">Delivery radius (miles, max 15)</label>
+            <label htmlFor="dl-provider">Delivery provider (for NEW paid orders)</label>
+            <select
+              id="dl-provider"
+              value={dlProvider}
+              onChange={(e) =>
+                setDlProvider(e.target.value === "shipday" ? "shipday" : "doordash")
+              }
+            >
+              <option value="doordash">DoorDash Drive</option>
+              <option value="shipday">Shipday</option>
+            </select>
+          </div>
+          <div className="ops-field">
+            <label htmlFor="dl-shipday-fee">
+              Shipday delivery fee ($, flat — charged to the customer in Shipday mode)
+            </label>
+            <input
+              id="dl-shipday-fee"
+              type="number"
+              min="0"
+              step="0.25"
+              value={dlShipdayFee}
+              onChange={(e) => setDlShipdayFee(e.target.value)}
+            />
+          </div>
+          <div className="ops-field">
+            <label htmlFor="dl-max-miles">Delivery radius (miles, max 15 — DoorDash only)</label>
             <input
               id="dl-max-miles"
               type="number"
@@ -1894,7 +1955,7 @@ export default function AdminPanel() {
             />
           </div>
           <div className="ops-field">
-            <label htmlFor="dl-min-subtotal">Minimum food subtotal for delivery ($, 0 = off)</label>
+            <label htmlFor="dl-min-subtotal">Minimum food subtotal for delivery ($, 0 = off — DoorDash only)</label>
             <input
               id="dl-min-subtotal"
               type="number"
@@ -1939,18 +2000,27 @@ export default function AdminPanel() {
                   min_subtotal_cents: Math.max(0, Math.round(Number(dlMinSubtotal) * 100) || 0),
                   markup_flat_cents: Math.max(0, Math.round(Number(dlMarkupFlat) * 100) || 0),
                   markup_percent: Math.min(100, Math.max(0, Number(dlMarkupPercent) || 0)),
+                  provider: dlProvider,
+                  shipday_delivery_fee_cents: Math.max(
+                    0,
+                    Math.round(Number(dlShipdayFee) * 100) || 0
+                  ),
                 },
-                "Delivery settings saved — new quotes now use them."
+                "Delivery settings saved — new orders now use them."
               )
             }
           >
             Save delivery settings
           </button>
           <p className="ops-muted">
-            The customer sees ONE “Delivery fee” line: the DoorDash fee plus this
-            extra fee combined. The split stays visible in each order's details
-            here in the panel. It applies to new quotes; orders already placed
-            keep the fee they were charged.
+            DoorDash mode: the customer sees ONE “Delivery fee” line — the
+            DoorDash fee plus the extra fee combined; the split stays visible in
+            each order's details here in the panel. Shipday mode: no quote — the
+            customer pays the flat Shipday fee above (the Free Delivery promotion
+            can still make it $0), and Shipday bills the restaurant per delivery
+            on its own account. Test orders are never sent to Shipday for real.
+            The switch applies to new orders only; orders already placed keep
+            the provider and fee they were charged with.
           </p>
         </section>
         <section className="ops-card">

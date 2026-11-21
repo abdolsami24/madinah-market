@@ -29,7 +29,9 @@ import CurbsideHere from "./CurbsideHere";
 import { checkoutOffersCurbside, type Fulfillment } from "@/lib/fulfillment";
 import {
   computeServiceFeeCents,
+  DEFAULT_FREE_DELIVERY,
   DEFAULT_SERVICE_FEE,
+  freeDeliveryApplies,
   type FreeDeliveryConfig,
   type ServiceFeeConfig,
 } from "@/lib/feePricing";
@@ -86,6 +88,13 @@ interface SiteState {
     delivery_enabled: boolean;
     /** Absent in older payloads = curbside ON (it ships enabled). */
     curbside_enabled?: boolean;
+    /**
+     * Active delivery provider (provider switch), riding inside the
+     * public settings object. Absent in older payloads = DoorDash.
+     */
+    delivery_provider?: string;
+    /** Flat delivery fee in cents when the provider is Shipday. */
+    shipday_delivery_fee_cents?: number;
   };
   unavailable: string[];
   promotions: { id: number; title: string; body: string; item_id: string | null }[];
@@ -417,8 +426,29 @@ export default function Storefront({
     subtotal,
     fees?.service_fee ?? DEFAULT_SERVICE_FEE
   );
+  // Delivery provider switch: in Shipday mode there is NO quote —
+  // the customer pays the flat Shipday fee from the public settings
+  // (zeroed by the Free Delivery promotion), and checkout never waits
+  // on a quote. DoorDash mode keeps the quoted charge exactly as
+  // before.
+  const shipdayMode = siteState?.settings.delivery_provider === "shipday";
+  const shipdayFeeCents = Math.max(
+    0,
+    Math.round(siteState?.settings.shipday_delivery_fee_cents ?? 699)
+  );
+  const shipdayFreeDelivery =
+    shipdayMode &&
+    freeDeliveryApplies(subtotal, fees?.free_delivery ?? DEFAULT_FREE_DELIVERY);
   const deliveryFee =
-    fulfillment === "delivery" && fee.kind === "ok" ? fee.delivery_charge_cents : 0;
+    fulfillment !== "delivery"
+      ? 0
+      : shipdayMode
+        ? shipdayFreeDelivery
+          ? 0
+          : shipdayFeeCents
+        : fee.kind === "ok"
+          ? fee.delivery_charge_cents
+          : 0;
   const total = subtotal - discountPreview + serviceFeePreview + tax + deliveryFee + tip;
 
   // Add (or merge) a cart line: same dish + same options + same
@@ -587,8 +617,10 @@ export default function Storefront({
   // quote id goes to checkout, which re-loads the fee from the store —
   // the browser's numbers are never trusted). The tip is an input
   // because tipping the driver lowers the DoorDash fee.
+  // Shipday mode never quotes: the fee is the flat admin-set amount.
   useEffect(() => {
     if (fulfillment !== "delivery") return;
+    if (shipdayMode) return;
     if (feeTimer.current) clearTimeout(feeTimer.current);
     const trimmed = address.trim();
     if (trimmed.length < 6) {
@@ -652,7 +684,7 @@ export default function Storefront({
     return () => {
       if (feeTimer.current) clearTimeout(feeTimer.current);
     };
-  }, [address, fulfillment, phone, tip, quoteNonce, subtotal]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [address, fulfillment, phone, tip, quoteNonce, subtotal, shipdayMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Quote expiry: when the stored quote lapses, refresh it and show
   // the (possibly changed) fee before the customer pays — a changed
@@ -672,7 +704,11 @@ export default function Storefront({
     return () => clearTimeout(t);
   }, [fee]);
 
-  const checkoutBlocked = fulfillment === "delivery" && fee.kind !== "ok";
+  // DoorDash mode blocks checkout until a live quote exists; Shipday
+  // mode only needs the address itself (the fee is flat).
+  const checkoutBlocked =
+    fulfillment === "delivery" &&
+    (shipdayMode ? address.trim().length < 6 : fee.kind !== "ok");
 
   // Checkout is a two-step flow (Sami's spec): first the customer chooses
   // Sign in / Sign in with Google / Continue as guest — only then does the
@@ -690,7 +726,10 @@ export default function Storefront({
     if (fullName.length < 2) return setError("Please enter your name.");
     if (phone.replace(/\D/g, "").length < 7)
       return setError("Please enter your phone number.");
-    if (fulfillment === "delivery" && fee.kind !== "ok") {
+    if (fulfillment === "delivery" && shipdayMode && address.trim().length < 6) {
+      return setError("Please enter the delivery address.");
+    }
+    if (fulfillment === "delivery" && !shipdayMode && fee.kind !== "ok") {
       return setError(
         "Please enter a delivery address inside our delivery area first."
       );
@@ -719,7 +758,10 @@ export default function Storefront({
     if (lines.length === 0) return setError("Your cart is empty.");
     if (fullName.length < 2) return setError("Please enter your name.");
     if (phone.replace(/\D/g, "").length < 7) return setError("Please enter your phone number.");
-    if (fulfillment === "delivery" && fee.kind !== "ok") {
+    if (fulfillment === "delivery" && shipdayMode && address.trim().length < 6) {
+      return setError("Please enter the delivery address.");
+    }
+    if (fulfillment === "delivery" && !shipdayMode && fee.kind !== "ok") {
       return setError("Please enter a delivery address inside our delivery area first.");
     }
     if (fulfillment === "curbside" && car.trim().length < 3) {
@@ -992,11 +1034,15 @@ export default function Storefront({
         <div className="row">
           <span>Delivery fee</span>
           <span>
-            {fee.kind === "ok"
-              ? fee.free_delivery
+            {shipdayMode
+              ? shipdayFreeDelivery
                 ? "FREE 🎉"
-                : formatCents(fee.delivery_charge_cents)
-              : "—"}
+                : formatCents(shipdayFeeCents)
+              : fee.kind === "ok"
+                ? fee.free_delivery
+                  ? "FREE 🎉"
+                  : formatCents(fee.delivery_charge_cents)
+                : "—"}
           </span>
         </div>
       )}
@@ -1404,6 +1450,16 @@ export default function Storefront({
                   placeholder="Street address, city, ZIP"
                   autoComplete="street-address"
                 />
+                {shipdayMode ? (
+                  <div className="fee-msg ok">
+                    {shipdayFreeDelivery
+                      ? `🎉 Free delivery applied — your order reached ${formatCents(
+                          fees?.free_delivery.threshold_cents ?? 0
+                        )}!`
+                      : `✅ Delivery fee ${formatCents(shipdayFeeCents)}`}
+                  </div>
+                ) : (
+                  <>
                 {fee.kind === "loading" && <div className="fee-msg">Checking delivery fee…</div>}
                 {fee.kind === "ok" && (
                   <div className="fee-msg ok">
@@ -1433,6 +1489,8 @@ export default function Storefront({
                       Try again
                     </button>
                   </div>
+                )}
+                  </>
                 )}
               </div>
             ) : (
