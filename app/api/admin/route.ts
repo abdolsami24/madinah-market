@@ -50,23 +50,36 @@ import {
   revokeBridge,
   selectPrinter,
   setPrinterCopies,
+  setPrinterEnabled,
 } from "@/lib/printer";
+import { getFreshKdsEnabled, setFreshKdsEnabled } from "@/lib/freshkds";
 
 export const dynamic = "force-dynamic";
 
 async function staffState() {
-  const [settings, unavailable, promotions, photos, menu, hours, delivery, fees, printer] =
-    await Promise.all([
-      getSettings(),
-      getUnavailableIds(),
-      listPromotions(false),
-      getDishPhotos(),
-      getDbMenu(),
-      getHoursConfig(),
-      getDeliverySettings(),
-      getFeeSettings(),
-      getPrinterAdminView(),
-    ]);
+  const [
+    settings,
+    unavailable,
+    promotions,
+    photos,
+    menu,
+    hours,
+    delivery,
+    fees,
+    printer,
+    freshkdsEnabled,
+  ] = await Promise.all([
+    getSettings(),
+    getUnavailableIds(),
+    listPromotions(false),
+    getDishPhotos(),
+    getDbMenu(),
+    getHoursConfig(),
+    getDeliverySettings(),
+    getFeeSettings(),
+    getPrinterAdminView(),
+    getFreshKdsEnabled(),
+  ]);
   return {
     settings,
     unavailable: [...unavailable],
@@ -89,8 +102,11 @@ async function staffState() {
     },
     // Kitchen printer / print bridge (staff view only — the bridge
     // token hash and pairing internals never leave lib/printer.ts;
-    // this view carries no secrets).
+    // this view carries no secrets). `enabled` inside it is the
+    // print ON/OFF switch.
     printer,
+    // Fresh KDS ON/OFF switch (staff view only, same reasoning).
+    freshkds_enabled: freshkdsEnabled,
     menu: { categories: menu.categories, items: menu.items },
   };
 }
@@ -322,6 +338,23 @@ export async function POST(req: Request) {
       case "printer_test_print": {
         await queueTestPrint();
         await logAudit(actor, "printer.test_print", {});
+        break;
+      }
+      case "printer_set_enabled": {
+        // Print ON/OFF switch. OFF stops the bridge jobs feed handing
+        // out order tickets (test tickets still flow); ON advances
+        // the print cutoff so orders paid while OFF are skipped.
+        const enabled = body.enabled === true;
+        await setPrinterEnabled(enabled);
+        await logAudit(actor, "printer.set_enabled", { enabled });
+        break;
+      }
+      case "freshkds_set_enabled": {
+        // Fresh KDS ON/OFF switch (website orders only — Square /
+        // kiosk orders reach the screens through Square itself).
+        const enabled = body.enabled === true;
+        await setFreshKdsEnabled(enabled);
+        await logAudit(actor, "freshkds.set_enabled", { enabled });
         break;
       }
       case "set_availability": {
