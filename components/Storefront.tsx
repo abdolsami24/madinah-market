@@ -25,6 +25,8 @@ import {
   type CartLine,
 } from "@/lib/cartClient";
 import DishPopup from "./DishPopup";
+import CurbsideHere from "./CurbsideHere";
+import { checkoutOffersCurbside, type Fulfillment } from "@/lib/fulfillment";
 import {
   computeServiceFeeCents,
   DEFAULT_SERVICE_FEE,
@@ -82,6 +84,8 @@ interface SiteState {
     ordering_enabled: boolean;
     pickup_enabled: boolean;
     delivery_enabled: boolean;
+    /** Absent in older payloads = curbside ON (it ships enabled). */
+    curbside_enabled?: boolean;
   };
   unavailable: string[];
   promotions: { id: number; title: string; body: string; item_id: string | null }[];
@@ -120,11 +124,12 @@ export default function Storefront({
   // Two-step checkout (after the sign-in/guest gate): 1 = details form,
   // 2 = review + the single "Place order — $total" button.
   const [checkoutStep, setCheckoutStep] = useState<1 | 2>(1);
-  const [fulfillment, setFulfillment] = useState<"pickup" | "delivery">("pickup");
+  const [fulfillment, setFulfillment] = useState<Fulfillment>("pickup");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
+  const [car, setCar] = useState("");
   const [note, setNote] = useState("");
   const [fee, setFee] = useState<FeeState>({ kind: "idle" });
   const [quoteNonce, setQuoteNonce] = useState(0);
@@ -133,6 +138,15 @@ export default function Storefront({
   const [error, setError] = useState("");
   const [placing, setPlacing] = useState(false);
   const [successOrder, setSuccessOrder] = useState<number | null>(null);
+  // The just-placed order's fulfillment + phone (kept in sessionStorage
+  // across the Stripe redirect) — drives the curbside "I'm here" button
+  // on the confirmation banner.
+  const [lastOrder, setLastOrder] = useState<{
+    id: number;
+    fulfillment: Fulfillment;
+    phone: string;
+    car: string;
+  } | null>(null);
   const [qrSource, setQrSource] = useState(false);
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const [accountName, setAccountName] = useState<string | null>(null);
@@ -166,6 +180,30 @@ export default function Storefront({
       setSuccessOrder(orderParam);
       setCart([]);
       clearCart();
+      // Returning from Stripe: recover the just-placed order's details
+      // (saved by placeOrder before the redirect) for the curbside
+      // "I'm here" button on the confirmation banner.
+      try {
+        const raw = sessionStorage.getItem("mm_last_order");
+        if (raw) {
+          const saved = JSON.parse(raw) as {
+            id?: number;
+            fulfillment?: Fulfillment;
+            phone?: string;
+            car?: string;
+          };
+          if (saved.id === orderParam && saved.fulfillment && saved.phone) {
+            setLastOrder({
+              id: orderParam,
+              fulfillment: saved.fulfillment,
+              phone: saved.phone,
+              car: saved.car ?? "",
+            });
+          }
+        }
+      } catch {
+        /* the banner simply shows without the button */
+      }
     }
     const onInstall = (e: Event) => {
       e.preventDefault();
@@ -200,6 +238,8 @@ export default function Storefront({
   const orderingClosed = siteState !== null && !siteState.settings.ordering_enabled;
   const pickupOff = siteState !== null && !siteState.settings.pickup_enabled;
   const deliveryOff = siteState !== null && !siteState.settings.delivery_enabled;
+  const curbsideOff =
+    siteState !== null && !checkoutOffersCurbside(siteState.settings);
   const unavailableSet = new Set(siteState?.unavailable ?? []);
   const promos = siteState?.promotions ?? [];
   const dishPhotos = siteState?.photos ?? {};
@@ -213,7 +253,10 @@ export default function Storefront({
   useEffect(() => {
     if (fulfillment === "pickup" && pickupOff && !deliveryOff) setFulfillment("delivery");
     if (fulfillment === "delivery" && deliveryOff && !pickupOff) setFulfillment("pickup");
-  }, [fulfillment, pickupOff, deliveryOff]);
+    if (fulfillment === "curbside" && curbsideOff) {
+      setFulfillment(!pickupOff ? "pickup" : "delivery");
+    }
+  }, [fulfillment, pickupOff, deliveryOff, curbsideOff]);
 
   // Load the signed-in customer's profile: greet them and prefill the
   // checkout form from their saved details (only into fields still empty).
@@ -652,6 +695,9 @@ export default function Storefront({
         "Please enter a delivery address inside our delivery area first."
       );
     }
+    if (fulfillment === "curbside" && car.trim().length < 3) {
+      return setError("Please tell us your car (color & type) so we can find you outside.");
+    }
     if (fulfillment === "pickup" && pickupWhen === "later") {
       const iso = pickupTime ? denverTimeTodayToISO(pickupTime) : null;
       if (!iso) return setError("Please choose a pickup time.");
@@ -675,6 +721,9 @@ export default function Storefront({
     if (phone.replace(/\D/g, "").length < 7) return setError("Please enter your phone number.");
     if (fulfillment === "delivery" && fee.kind !== "ok") {
       return setError("Please enter a delivery address inside our delivery area first.");
+    }
+    if (fulfillment === "curbside" && car.trim().length < 3) {
+      return setError("Please tell us your car (color & type) so we can find you outside.");
     }
     // Scheduled pickup ("pickup for later") — validated again on the server.
     let scheduledFor: string | undefined;
@@ -721,6 +770,7 @@ export default function Storefront({
           customer_phone: phone.trim(),
           fulfillment,
           delivery_address: fulfillment === "delivery" ? address.trim() : undefined,
+          car_description: fulfillment === "curbside" ? car.trim() : undefined,
           delivery_quote_id:
             fulfillment === "delivery" && fee.kind === "ok" ? fee.quote_id : undefined,
           note: note.trim() || undefined,
@@ -743,6 +793,21 @@ export default function Storefront({
         );
       }
       if (!res.ok) throw new Error(data.error || "Checkout failed");
+      // Remember this order (fulfillment + phone) so the confirmation
+      // banner can offer the curbside "I'm here" button — including
+      // after the Stripe redirect reloads the page.
+      const placed = {
+        id: data.order_id as number,
+        fulfillment,
+        phone: phone.trim(),
+        car: fulfillment === "curbside" ? car.trim() : "",
+      };
+      setLastOrder(placed);
+      try {
+        sessionStorage.setItem("mm_last_order", JSON.stringify(placed));
+      } catch {
+        /* in-memory state still covers the test-mode path */
+      }
       if (data.url) {
         window.location.href = data.url as string;
         return;
@@ -990,6 +1055,14 @@ export default function Storefront({
             ✅ <strong>Order #{successOrder} received!</strong> Thank you — we are on it.
             <br />
             <Link href={`/track?order=${successOrder}`}>Track your order →</Link>
+            {lastOrder?.id === successOrder && lastOrder.fulfillment === "curbside" && (
+              <CurbsideHere
+                orderId={successOrder}
+                phone={lastOrder.phone}
+                alreadyHere={false}
+                carDescription={lastOrder.car || null}
+              />
+            )}
           </div>
         )}
 
@@ -1212,6 +1285,14 @@ export default function Storefront({
               </button>
               <button
                 type="button"
+                className={fulfillment === "curbside" ? "active" : ""}
+                onClick={() => setFulfillment("curbside")}
+                disabled={curbsideOff}
+              >
+                🚗 Curbside{curbsideOff ? " (off)" : ""}
+              </button>
+              <button
+                type="button"
                 className={fulfillment === "delivery" ? "active" : ""}
                 onClick={() => setFulfillment("delivery")}
                 disabled={deliveryOff}
@@ -1220,9 +1301,11 @@ export default function Storefront({
               </button>
             </div>
             <div className="fee-msg">
-              {fulfillment === "pickup"
-                ? `Pickup today: ${formatWindow(pickupWins[denverParts(new Date()).dayIndex])}`
-                : `Delivery today: ${formatWindow(deliveryWins[denverParts(new Date()).dayIndex])}`}
+              {fulfillment === "delivery"
+                ? `Delivery today: ${formatWindow(deliveryWins[denverParts(new Date()).dayIndex])}`
+                : fulfillment === "curbside"
+                  ? `Curbside today: ${formatWindow(pickupWins[denverParts(new Date()).dayIndex])} — order online, park outside, and we bring it to your car.`
+                  : `Pickup today: ${formatWindow(pickupWins[denverParts(new Date()).dayIndex])}`}
             </div>
 
             {fulfillment === "pickup" && (
@@ -1353,15 +1436,35 @@ export default function Storefront({
                 )}
               </div>
             ) : (
-              <div className="field">
-                <label htmlFor="co-note">Pickup note (optional)</label>
-                <input
-                  id="co-note"
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  placeholder="e.g. ready in 20 minutes"
-                />
-              </div>
+              <>
+                {fulfillment === "curbside" && (
+                  <div className="field">
+                    <label htmlFor="co-car">Your car (color &amp; type)</label>
+                    <input
+                      id="co-car"
+                      value={car}
+                      onChange={(e) => setCar(e.target.value)}
+                      placeholder="e.g. Red Toyota Camry"
+                      autoComplete="off"
+                    />
+                    <div className="fee-msg">
+                      So we can find you outside — park, tap “I&apos;m here” after
+                      paying, and we&apos;ll bring your order out.
+                    </div>
+                  </div>
+                )}
+                <div className="field">
+                  <label htmlFor="co-note">
+                    {fulfillment === "curbside" ? "Note (optional)" : "Pickup note (optional)"}
+                  </label>
+                  <input
+                    id="co-note"
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    placeholder="e.g. ready in 20 minutes"
+                  />
+                </div>
+              </>
             )}
 
             <div className="field">

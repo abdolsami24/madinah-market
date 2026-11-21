@@ -57,6 +57,7 @@ interface AdminState {
     ordering_enabled: boolean;
     pickup_enabled: boolean;
     delivery_enabled: boolean;
+    curbside_enabled: boolean;
   };
   unavailable: string[];
   promotions: Promotion[];
@@ -127,6 +128,9 @@ interface PanelOrder {
   freshkds_status?: string | null;
   freshkds_error?: string | null;
   freshkds_sent_at?: string | null;
+  // Curbside — absent until supabase/curbside-schema.sql runs.
+  car_description?: string | null;
+  customer_here_at?: string | null;
   delivery_quote?: {
     provider_mode: string;
     fee_cents: number;
@@ -860,7 +864,9 @@ export default function AdminPanel() {
                     #{o.id} · {o.customer_name ?? "Guest"}
                   </strong>
                   <span>
-                    {fmtTime(o.created_at)} · {o.fulfillment} · {formatCents(o.total_cents)}
+                    {fmtTime(o.created_at)} ·{" "}
+                    {o.fulfillment === "curbside" ? "🚗 curbside" : o.fulfillment} ·{" "}
+                    {formatCents(o.total_cents)}
                   </span>
                   <span>
                     {o.payment_status} · {adminStatusLabel(o)}
@@ -890,11 +896,27 @@ export default function AdminPanel() {
                   <span>Phone</span>
                   <strong>{selectedOrder.customer_phone ?? "—"}</strong>
                   <span>Fulfillment</span>
-                  <strong>{selectedOrder.fulfillment}</strong>
+                  <strong>
+                    {selectedOrder.fulfillment === "curbside"
+                      ? "🚗 Curbside"
+                      : selectedOrder.fulfillment}
+                  </strong>
                   {selectedOrder.fulfillment === "delivery" && (
                     <>
                       <span>Address</span>
                       <strong>{selectedOrder.delivery_address ?? "—"}</strong>
+                    </>
+                  )}
+                  {selectedOrder.fulfillment === "curbside" && (
+                    <>
+                      <span>Car</span>
+                      <strong>🚗 {selectedOrder.car_description ?? "—"}</strong>
+                      <span>Customer arrived</span>
+                      <strong>
+                        {selectedOrder.customer_here_at
+                          ? fmtTime(selectedOrder.customer_here_at)
+                          : "Not yet"}
+                      </strong>
                     </>
                   )}
                   {selectedOrder.scheduled_for && (
@@ -1680,7 +1702,7 @@ export default function AdminPanel() {
     if (!state) return null;
     const switchRow = (
       label: string,
-      key: "ordering_enabled" | "pickup_enabled" | "delivery_enabled"
+      key: "ordering_enabled" | "pickup_enabled" | "delivery_enabled" | "curbside_enabled"
     ) => {
       const on = state.settings[key];
       return (
@@ -1732,6 +1754,7 @@ export default function AdminPanel() {
           <h3>Ordering switches</h3>
           {switchRow("Online ordering (whole system)", "ordering_enabled")}
           {switchRow("Pickup", "pickup_enabled")}
+          {switchRow("Curbside pickup", "curbside_enabled")}
           {switchRow("Delivery", "delivery_enabled")}
           <p className="ops-muted">
             Changes apply to the website immediately. Turning the whole system OFF lets

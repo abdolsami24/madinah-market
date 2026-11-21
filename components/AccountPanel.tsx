@@ -381,7 +381,11 @@ export default function AccountPanel() {
                     .join(", ")}
                   <br />
                   <span style={{ color: "#8a7a5f" }}>
-                    {o.fulfillment === "delivery" ? "🛵 Delivery" : "🏃 Pickup"} · {o.kitchen_status} ·{" "}
+                    {o.fulfillment === "delivery"
+                      ? "🛵 Delivery"
+                      : o.fulfillment === "curbside"
+                        ? "🚗 Curbside"
+                        : "🏃 Pickup"} · {o.kitchen_status} ·{" "}
                     {o.payment_status}
                   </span>
                 </span>

@@ -50,6 +50,9 @@ interface KitchenOrder {
   total_cents: number;
   fulfillment: string;
   delivery_address: string | null;
+  /** Curbside (absent until supabase/curbside-schema.sql runs). */
+  car_description?: string | null;
+  customer_here_at?: string | null;
   scheduled_for: string | null;
   payment_status: string;
   kitchen_status: string;
@@ -123,6 +126,7 @@ function printTicket(order: KitchenOrder) {
     <hr/>
     <div>${order.customer_name ?? ""} · ${order.customer_phone ?? ""}</div>
     ${order.fulfillment === "delivery" ? `<div><strong>DELIVERY:</strong> ${order.delivery_address ?? ""}</div>` : ""}
+    ${order.fulfillment === "curbside" ? `<div><strong>CAR:</strong> ${order.car_description ?? ""}</div>` : ""}
     <hr/>${items}<hr/>
     <div class="row"><span>Subtotal</span><span>${formatCents(order.subtotal_cents)}</span></div>
     ${order.discount_cents > 0 ? `<div class="row"><span>Loyalty discount</span><span>-${formatCents(order.discount_cents)}</span></div>` : ""}
@@ -339,8 +343,17 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
 
         <div className="k-grid">
           {visible.map((o) => {
+            // Curbside: the customer tapped "I'm here" and is waiting
+            // outside — the card lights up until the order completes.
+            const customerHere =
+              o.fulfillment === "curbside" && Boolean(o.customer_here_at);
             return (
-              <article className={`k-card${freshRef.current.has(o.id) ? " is-new" : ""}`} key={o.id}>
+              <article
+                className={`k-card${freshRef.current.has(o.id) ? " is-new" : ""}${
+                  customerHere ? " customer-here" : ""
+                }`}
+                key={o.id}
+              >
                 {/* ONE TAP: the whole header is the ready button. Print
                     lives in the footer, outside this area. */}
                 <div
@@ -358,8 +371,20 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
                 >
                   <h2>
                     #{o.id}{" "}
-                    <span className={`k-badge ${o.fulfillment === "delivery" ? "delivery" : "pickup"}`}>
-                      {o.fulfillment === "delivery" ? "🛵 DELIVERY" : "🏃 PICKUP"}
+                    <span
+                      className={`k-badge ${
+                        o.fulfillment === "delivery"
+                          ? "delivery"
+                          : o.fulfillment === "curbside"
+                            ? "curbside"
+                            : "pickup"
+                      }`}
+                    >
+                      {o.fulfillment === "delivery"
+                        ? "🛵 DELIVERY"
+                        : o.fulfillment === "curbside"
+                          ? "🚗 CURBSIDE"
+                          : "🏃 PICKUP"}
                     </span>
                     <span className={`k-badge ${o.payment_status === "unpaid" ? "unpaid" : "paid"}`}>
                       {o.payment_status === "test_paid"
@@ -370,6 +395,17 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
                   <div>
                     {o.customer_name ?? ""} · {o.customer_phone ?? ""}
                   </div>
+                  {o.fulfillment === "curbside" && o.car_description && (
+                    <div style={{ fontWeight: 700 }}>🚗 {o.car_description}</div>
+                  )}
+                  {customerHere && (
+                    <div className="k-here-banner">
+                      🚗 CUSTOMER IS HERE
+                      {o.customer_here_at
+                        ? ` — since ${new Date(o.customer_here_at).toLocaleTimeString()}`
+                        : ""}
+                    </div>
+                  )}
                   <div style={{ color: "#cbbfa8", fontSize: "0.95rem" }}>
                     {new Date(o.created_at).toLocaleTimeString()} ·{" "}
                     {isPaid(o) ? (
@@ -489,7 +525,11 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
                   style={{ padding: "0.35rem 0", borderBottom: "1px dashed #444" }}
                 >
                   #{o.id} · {o.customer_name ?? ""} ·{" "}
-                  {o.fulfillment === "delivery" ? "🛵 Delivery" : "🏃 Pickup"} ·{" "}
+                  {o.fulfillment === "delivery"
+                    ? "🛵 Delivery"
+                    : o.fulfillment === "curbside"
+                      ? "🚗 Curbside"
+                      : "🏃 Pickup"} ·{" "}
                   {formatCents(o.total_cents)} ·{" "}
                   {new Date(o.created_at).toLocaleTimeString()}
                 </div>
