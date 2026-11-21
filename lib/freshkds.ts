@@ -84,6 +84,52 @@ export function freshkdsConfigured(): boolean {
   return Boolean(process.env.FRESHKDS_TOKEN);
 }
 
+// ---- ON/OFF switch (Admin → Operations → "Fresh KDS screen") -------------------
+//
+// Stored as the site_settings key `freshkds_enabled`. FAIL-SOFT RULE:
+// a missing key, a missing table or any DB error reads as ON, so the
+// switch can never silently stop the kitchen screens — only an
+// explicit `false` saved by the admin turns sends off. When OFF,
+// markOrderPaid's send records freshkds_status 'off' on the order
+// instead of calling the Fresh API (see sendOrderToFreshKds).
+
+const FRESHKDS_ENABLED_KEY = "freshkds_enabled";
+
+/** Pure: only an explicit false / "false" means OFF; anything else is ON. */
+export function freshkdsEnabledFromValue(value: unknown): boolean {
+  return !(value === false || value === "false");
+}
+
+export async function getFreshKdsEnabled(): Promise<boolean> {
+  try {
+    const supabase = getServiceClient();
+    const { data, error } = await supabase
+      .from("site_settings")
+      .select("value")
+      .eq("key", FRESHKDS_ENABLED_KEY)
+      .maybeSingle();
+    if (error || !data) return true;
+    return freshkdsEnabledFromValue((data as { value: unknown }).value);
+  } catch {
+    return true;
+  }
+}
+
+export async function setFreshKdsEnabled(enabled: boolean): Promise<void> {
+  const supabase = getServiceClient();
+  const { error } = await supabase
+    .from("site_settings")
+    .upsert(
+      {
+        key: FRESHKDS_ENABLED_KEY,
+        value: enabled === true,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "key" }
+    );
+  if (error) throw error;
+}
+
 function apiBase(): string {
   return (process.env.FRESHKDS_API_BASE || DEFAULT_API_BASE).replace(/\/+$/, "");
 }
@@ -233,7 +279,7 @@ export function buildFreshKdsPayload(
 
 async function recordFreshKdsResult(
   orderId: number,
-  status: "sent" | "failed",
+  status: "sent" | "failed" | "off",
   error: string | null
 ): Promise<void> {
   try {
@@ -269,8 +315,18 @@ async function recordFreshKdsResult(
 export async function sendOrderToFreshKds(
   order: FreshKdsOrder
 ): Promise<{ ok: boolean; detail: string }> {
-  if (!freshkdsConfigured()) return { ok: false, detail: "not configured" };
   if (order.freshkds_status === "sent") return { ok: true, detail: "already sent" };
+  // ON/OFF switch (Admin → Operations): when OFF the Fresh API is
+  // never called and the order records status 'off', so the admin
+  // order detail can show exactly why nothing was sent. The gate is
+  // checked before the configured check so 'off' is recorded even on
+  // a not-yet-configured install. Fail-soft: an unreadable setting
+  // reads as ON (getFreshKdsEnabled).
+  if (!(await getFreshKdsEnabled())) {
+    await recordFreshKdsResult(order.id, "off", null);
+    return { ok: false, detail: "off — KDS switch is OFF" };
+  }
+  if (!freshkdsConfigured()) return { ok: false, detail: "not configured" };
   try {
     const locationId = await resolveLocationId();
     // Menu numbers for the item names: live menu (DB) first, the

@@ -64,6 +64,11 @@ export interface PrinterConfig {
   copies: number; // 1–3
   test_job: { id: string; requested_at: string } | null;
   rescan_requested_at: string | null;
+  /**
+   * Print ON/OFF switch (Admin → Operations). Missing = ON, so a
+   * config written before this field existed keeps printing.
+   */
+  enabled: boolean;
 }
 
 export interface PairingInfo {
@@ -129,6 +134,8 @@ export interface PrinterAdminView {
   test_pending: boolean;
   last_error: string | null;
   parked_count: number;
+  /** Print ON/OFF switch state (default ON). */
+  enabled: boolean;
 }
 
 // ---- Constants ------------------------------------------------------------------
@@ -163,6 +170,7 @@ export const DEFAULT_PRINTER_CONFIG: PrinterConfig = {
   copies: 1,
   test_job: null,
   rescan_requested_at: null,
+  enabled: true,
 };
 
 // ---- Pure helpers (harness-tested) ----------------------------------------------
@@ -229,6 +237,53 @@ export function pendingOrderJobs<T extends { id: number }>(
     .filter((o) => !printed.has(o.id))
     .filter((o) => (state.attempts[String(o.id)] ?? 0) < MAX_PRINT_ATTEMPTS)
     .sort((a, b) => a.id - b.id);
+}
+
+/**
+ * Composes one poll's job list (pure): the queued TEST ticket first —
+ * it flows even while printing is OFF, so Test print always works —
+ * then the pending order tickets, but ONLY when printing is enabled.
+ * `orders` must already be filtered to paid + not cancelled.
+ */
+export function composeJobs(
+  state: BridgeState,
+  config: PrinterConfig,
+  orders: TicketOrder[],
+  numbers: Record<string, string>,
+  nowIso: string
+): PrintJob[] {
+  const jobs: PrintJob[] = [];
+  if (testJobPending(state, config) && config.test_job) {
+    jobs.push({
+      job_id: `test:${config.test_job.id}`,
+      kind: "test",
+      printer: config.selected_printer,
+      copies: config.copies,
+      ticket: buildTestTicketText(nowIso),
+    });
+  }
+  if (!config.enabled) return jobs;
+  const pending = pendingOrderJobs(state, orders).slice(0, MAX_JOBS_PER_POLL);
+  for (const order of pending) {
+    jobs.push({
+      job_id: `order:${order.id}`,
+      kind: "order",
+      order_id: order.id,
+      printer: config.selected_printer,
+      copies: config.copies,
+      ticket: buildTicketText(order, numbers),
+    });
+  }
+  return jobs;
+}
+
+/**
+ * The cutoff after an OFF→ON flip (pure): advance to the current max
+ * paid order id, never backwards — orders paid while printing was OFF
+ * are skipped instead of flooding the printer when it comes back on.
+ */
+export function cutoffAfterEnable(state: BridgeState, maxPaidOrderId: number): number {
+  return Math.max(state.cutoff_order_id, Math.max(0, Math.floor(maxPaidOrderId) || 0));
 }
 
 /**
@@ -355,6 +410,9 @@ export function normalizeConfig(raw: unknown): PrinterConfig {
         : null,
     rescan_requested_at:
       typeof r.rescan_requested_at === "string" ? r.rescan_requested_at : null,
+    // Only an explicit false turns printing off — anything else
+    // (missing key, older config, junk) means ON.
+    enabled: r.enabled === false ? false : true,
   };
 }
 
@@ -582,6 +640,7 @@ export async function getPrinterAdminView(): Promise<PrinterAdminView> {
     test_pending: false,
     last_error: null,
     parked_count: 0,
+    enabled: true,
   };
   try {
     const store = await getPrinterStore();
@@ -603,6 +662,7 @@ export async function getPrinterAdminView(): Promise<PrinterAdminView> {
       parked_count: Object.values(store.state.attempts).filter(
         (n) => n >= MAX_PRINT_ATTEMPTS
       ).length,
+      enabled: store.config.enabled,
     };
   } catch {
     return empty;
@@ -645,6 +705,38 @@ export async function requestRescan(): Promise<void> {
   await saveConfig({ ...store.config, rescan_requested_at: new Date().toISOString() });
 }
 
+/** The highest paid/test_paid order id right now (0 when there are none). */
+async function maxPaidOrderId(): Promise<number> {
+  const supabase = getServiceClient();
+  const { data, error } = await supabase
+    .from("orders")
+    .select("id")
+    .in("payment_status", ["paid", "test_paid"])
+    .order("id", { ascending: false })
+    .limit(1);
+  if (error) throw new Error("Could not read the orders table.");
+  return data && data.length > 0 ? Number((data[0] as { id: unknown }).id) || 0 : 0;
+}
+
+/**
+ * The print ON/OFF switch (Admin → Operations → Kitchen printer).
+ * Turning OFF just stops the jobs feed handing out order tickets (the
+ * bridge program is unchanged; a queued test ticket still flows).
+ * Turning back ON first advances the print cutoff to the current max
+ * paid order id — the same snapshot mechanism as pairing — so orders
+ * paid while OFF are skipped rather than printing all at once.
+ */
+export async function setPrinterEnabled(enabled: boolean): Promise<void> {
+  const store = await getPrinterStore();
+  if (enabled && !store.config.enabled) {
+    const cutoff = cutoffAfterEnable(store.state, await maxPaidOrderId());
+    if (cutoff !== store.state.cutoff_order_id) {
+      await saveState({ ...store.state, cutoff_order_id: cutoff });
+    }
+  }
+  await saveConfig({ ...store.config, enabled });
+}
+
 /** Queues a one-shot test ticket for the bridge's next poll. */
 export async function queueTestPrint(): Promise<void> {
   const store = await getPrinterStore();
@@ -681,15 +773,12 @@ export async function pairBridge(
   // Snapshot the cutoff BEFORE issuing the token (fail closed: if the
   // orders table cannot be read, pairing fails rather than risking a
   // backlog print on first connect).
-  const supabase = getServiceClient();
-  const { data, error } = await supabase
-    .from("orders")
-    .select("id")
-    .in("payment_status", ["paid", "test_paid"])
-    .order("id", { ascending: false })
-    .limit(1);
-  if (error) throw new Error("Could not read the orders table — pairing stopped, try again.");
-  const cutoff = data && data.length > 0 ? Number((data[0] as { id: unknown }).id) || 0 : 0;
+  let cutoff: number;
+  try {
+    cutoff = await maxPaidOrderId();
+  } catch {
+    throw new Error("Could not read the orders table — pairing stopped, try again.");
+  }
 
   const token = randomBytes(32).toString("hex");
   const now = new Date().toISOString();
@@ -773,19 +862,14 @@ async function resolveMenuNumbers(): Promise<Record<string, string>> {
   return numbers;
 }
 
-/** The pending print jobs for one bridge poll: test ticket first, then orders. */
+/**
+ * The pending print jobs for one bridge poll: test ticket first, then
+ * orders. When the print switch is OFF the feed returns NO order jobs
+ * (the queued test ticket still flows) — gating is entirely here on
+ * the server; the bridge program is unchanged.
+ */
 export async function bridgeJobs(store: PrinterStore): Promise<PrintJob[]> {
-  const jobs: PrintJob[] = [];
   const { state, config } = store;
-  if (testJobPending(state, config) && config.test_job) {
-    jobs.push({
-      job_id: `test:${config.test_job.id}`,
-      kind: "test",
-      printer: config.selected_printer,
-      copies: config.copies,
-      ticket: buildTestTicketText(new Date().toISOString()),
-    });
-  }
   const supabase = getServiceClient();
   const { data, error } = await supabase
     .from("orders")
@@ -796,24 +880,11 @@ export async function bridgeJobs(store: PrinterStore): Promise<PrintJob[]> {
     .order("id", { ascending: true })
     .limit(100);
   if (error) throw error;
-  const pending = pendingOrderJobs(state, (data as TicketOrder[]) ?? []).slice(
-    0,
-    MAX_JOBS_PER_POLL
-  );
-  if (pending.length > 0) {
-    const numbers = await resolveMenuNumbers();
-    for (const order of pending) {
-      jobs.push({
-        job_id: `order:${order.id}`,
-        kind: "order",
-        order_id: order.id,
-        printer: config.selected_printer,
-        copies: config.copies,
-        ticket: buildTicketText(order, numbers),
-      });
-    }
-  }
-  return jobs;
+  const orders = (data as TicketOrder[]) ?? [];
+  const needsNumbers =
+    config.enabled && pendingOrderJobs(state, orders).length > 0;
+  const numbers = needsNumbers ? await resolveMenuNumbers() : {};
+  return composeJobs(state, config, orders, numbers, new Date().toISOString());
 }
 
 /** Records one print result. Exactly-once lives in applyAck. */
