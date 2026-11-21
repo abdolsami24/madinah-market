@@ -12,6 +12,7 @@ interface BoardOrder {
   id: number;
   kitchen_status: string;
   payment_status: string;
+  fulfillment?: string;
   created_at: string;
 }
 
@@ -22,6 +23,7 @@ export default function DisplayPage() {
   const [testMode, setTestMode] = useState(false);
   const [soundOn, setSoundOn] = useState(false);
   const [flashId, setFlashId] = useState<number | null>(null);
+  const [flashCurbside, setFlashCurbside] = useState(false);
   const knownReadyRef = useRef<Set<number>>(new Set());
   const firstLoadRef = useRef(true);
 
@@ -40,6 +42,7 @@ export default function DisplayPage() {
           const fresh = readyNow.find((o) => !knownReadyRef.current.has(o.id));
           if (fresh) {
             setFlashId(fresh.id);
+            setFlashCurbside(fresh.fulfillment === "curbside");
             if (soundOn) {
               try {
                 const utter = new SpeechSynthesisUtterance(`Order number ${fresh.id} is ready`);
@@ -74,12 +77,14 @@ export default function DisplayPage() {
         <div className="ready-flash">
           <div className="label">ORDER READY</div>
           <div className="big">#{flashId}</div>
-          <div className="label">Please come to the counter</div>
+          <div className="label">
+            {flashCurbside ? "🚗 We're bringing it out to your car" : "Please come to the counter"}
+          </div>
         </div>
       )}
       <div className="display-wrap">
         <div className="display-head">
-          <h1>Madinah Bakery & Kabob — Order Status</h1>
+          <h1>Madinah Market — Order Status</h1>
           {!soundOn && (
             <button type="button" className="k-btn" onClick={() => setSoundOn(true)}>
               🔊 Enable sound
@@ -93,6 +98,7 @@ export default function DisplayPage() {
               {preparing.map((o) => (
                 <div className="display-num" key={o.id}>
                   #{o.id}
+                  {o.fulfillment === "curbside" ? " 🚗" : ""}
                 </div>
               ))}
               {preparing.length === 0 && <div style={{ color: "#737373", fontSize: "1.6rem" }}>—</div>}
@@ -104,6 +110,7 @@ export default function DisplayPage() {
               {ready.map((o) => (
                 <div className="display-num" key={o.id}>
                   #{o.id}
+                  {o.fulfillment === "curbside" ? " 🚗" : ""}
                 </div>
               ))}
               {ready.length === 0 && <div style={{ color: "#737373", fontSize: "1.6rem" }}>—</div>}
@@ -111,7 +118,7 @@ export default function DisplayPage() {
           </section>
         </div>
         <div className="display-foot">
-          Madinah Bakery & Kabob · 3126 S Parker Rd, Aurora · 720-763-0786
+          Madinah Market · 3126 S Parker Rd, Aurora · 720-763-0786
           {testMode && <div style={{ color: "#facc15" }}>TEST MODE — all orders shown</div>}
         </div>
       </div>

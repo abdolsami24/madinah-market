@@ -1,7 +1,7 @@
 // POST /api/checkout
 // Body: { items: [{id, qty}], customer_name, customer_phone, fulfillment,
-//         delivery_address?, delivery_quote_id?, tip_percent?,
-//         tip_custom_cents?, note? }
+//         delivery_address?, car_description? (curbside), delivery_quote_id?,
+//         tip_percent?, tip_custom_cents?, note? }
 // The server rebuilds the order from lib/menu (browser prices are never
 // trusted), saves it as "unpaid", then either returns a Stripe Checkout URL
 // (real mode) or { test_mode: true, order_id } (test mode).
@@ -32,6 +32,7 @@ import { getServiceClient, supabaseConfigured, verifyCustomerUser } from "@/lib/
 import { getStripe, siteUrl, stripeTestMode } from "@/lib/stripe";
 import { getPointsBalance, redemptionFor, redeemPointsForOrder } from "@/lib/points";
 import { getSettings, getUnavailableIds, getHoursConfig } from "@/lib/admin";
+import { normalizeFulfillment } from "@/lib/fulfillment";
 import { getPricingMenuById } from "@/lib/menuDb";
 import { validatePickupTime } from "@/lib/hours";
 import type Stripe from "stripe";
@@ -55,12 +56,18 @@ export async function POST(req: Request) {
 
   const customer_name = String(body.customer_name ?? "").trim().slice(0, 80);
   const customer_phone = String(body.customer_phone ?? "").trim().slice(0, 30);
-  const fulfillment = body.fulfillment === "delivery" ? "delivery" : "pickup";
+  // 'pickup' | 'curbside' | 'delivery' (lib/fulfillment). Curbside is
+  // pickup for money: it NEVER enters the delivery-quote path below.
+  const fulfillment = normalizeFulfillment(body.fulfillment);
   const delivery_address = String(body.delivery_address ?? "").trim().slice(0, 300);
+  const car_description = String(body.car_description ?? "").trim().slice(0, 80);
   const note = String(body.note ?? "").trim().slice(0, 200);
 
   if (customer_name.length < 2) return bad("Please enter your name");
   if (customer_phone.replace(/\D/g, "").length < 7) return bad("Please enter your phone number");
+  if (fulfillment === "curbside" && car_description.length < 3) {
+    return bad("Please tell us your car (color & type) so we can find you outside.");
+  }
 
   // Admin switches: the whole system, or one fulfillment type, may be off.
   const settings = await getSettings();
@@ -69,6 +76,9 @@ export async function POST(req: Request) {
   }
   if (fulfillment === "pickup" && !settings.pickup_enabled) {
     return bad("Pickup ordering is currently off. Please choose delivery or call us.", 400);
+  }
+  if (fulfillment === "curbside" && !settings.curbside_enabled) {
+    return bad("Curbside pickup is currently off. Please choose pickup or delivery, or call us.", 400);
   }
   if (fulfillment === "delivery" && !settings.delivery_enabled) {
     return bad("Delivery ordering is currently off. Please choose pickup or call us.", 400);
@@ -229,10 +239,13 @@ export async function POST(req: Request) {
       delivery_markup_cents,
       service_fee_cents: totals.service_fee_cents,
       free_delivery,
+      // Curbside car text (null for pickup/delivery). Dropped by the
+      // fallback below until supabase/curbside-schema.sql has run.
+      car_description: fulfillment === "curbside" ? car_description : null,
     })
     .select("id")
     .single();
-  if (error && /(delivery_|service_fee|free_delivery)/i.test(error.message)) {
+  if (error && /(delivery_|service_fee|free_delivery|car_description)/i.test(error.message)) {
     // supabase/service-fee-promo-schema.sql not run yet — save the
     // order without the two newest columns (totals are unchanged;
     // only the service-fee / free-delivery record is not stored).

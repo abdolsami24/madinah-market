@@ -1,7 +1,8 @@
 // GET /api/board-orders
 // PUBLIC, SAFE feed for the customer TV board. Returns ONLY: id,
-// kitchen_status, payment_status, created_at — never names, phones,
-// addresses or prices.
+// kitchen_status, payment_status, fulfillment, created_at — never
+// names, phones, addresses or prices. (Fulfillment rides along so the
+// board can mark curbside orders and word its READY flash for them.)
 //
 // Real-launch rule: only PAID orders from the last 4 hours; cancelled
 // never appears. When NEXT_PUBLIC_BOARD_TEST_MODE=true the rule is
@@ -26,7 +27,7 @@ export async function GET() {
   const supabase = getServiceClient();
   let query = supabase
     .from("orders")
-    .select("id, kitchen_status, payment_status, created_at")
+    .select("id, kitchen_status, payment_status, fulfillment, created_at")
     .not("kitchen_status", "in", '("completed","cancelled")')
     .order("created_at", { ascending: true })
     .limit(60);
@@ -51,7 +52,7 @@ export async function GET() {
   const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
   const { data: doneData } = await supabase
     .from("orders")
-    .select("id, kitchen_status, payment_status, created_at")
+    .select("id, kitchen_status, payment_status, fulfillment, created_at")
     .eq("kitchen_status", "completed")
     .in("payment_status", ["paid", "test_paid"])
     .gte("created_at", fifteenMinAgo)

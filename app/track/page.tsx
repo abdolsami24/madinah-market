@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { formatCents } from "@/lib/menu";
+import CurbsideHere from "@/components/CurbsideHere";
 import {
   deliveryStatusLabel,
   deliveryStepIndex,
@@ -33,6 +34,9 @@ interface TrackedOrder {
   total_cents: number;
   fulfillment: string;
   delivery_address: string | null;
+  /** Curbside only: the car text + the "I'm here" arrival time. */
+  car_description?: string | null;
+  customer_here_at?: string | null;
   payment_status: string;
   kitchen_status: string;
   shipday_status: string | null;
@@ -130,7 +134,9 @@ export default function TrackPage() {
   const steps =
     order?.fulfillment === "delivery"
       ? ["Order received", "Accepted", "Driver on the way", "Delivered"]
-      : ["Order received", "Accepted", "Ready", "Picked up"];
+      : order?.fulfillment === "curbside"
+        ? ["Order received", "Accepted", "Ready", "Brought to your car"]
+        : ["Order received", "Accepted", "Ready", "Picked up"];
   const current = order ? stepIndex(order) : -1;
 
   return (
@@ -181,7 +187,12 @@ export default function TrackPage() {
         {order && (
           <section className="panel">
             <h3>
-              Order #{order.id} — {order.fulfillment === "delivery" ? "🛵 Delivery" : "🏃 Pickup"}
+              Order #{order.id} —{" "}
+              {order.fulfillment === "delivery"
+                ? "🛵 Delivery"
+                : order.fulfillment === "curbside"
+                  ? "🚗 Curbside"
+                  : "🏃 Pickup"}
             </h3>
             {order.kitchen_status === "cancelled" ? (
               <p className="form-error">This order was cancelled. Please call us: 720-763-0786.</p>
@@ -213,6 +224,18 @@ export default function TrackPage() {
                     )}
                   </p>
                 )}
+                {order.fulfillment === "curbside" &&
+                  (order.payment_status === "paid" ||
+                    order.payment_status === "test_paid") &&
+                  order.kitchen_status !== "completed" && (
+                    <CurbsideHere
+                      key={order.customer_here_at ?? "not-here"}
+                      orderId={order.id}
+                      phone={phone}
+                      alreadyHere={Boolean(order.customer_here_at)}
+                      carDescription={order.car_description ?? null}
+                    />
+                  )}
               </>
             )}
             {(order.items ?? []).map((l, i) => (

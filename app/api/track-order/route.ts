@@ -32,17 +32,26 @@ export async function POST(req: Request) {
   const supabase = getServiceClient();
   // Optional columns are selected when they exist; until the matching
   // schema files run (stage3-schema.sql, then
-  // service-fee-promo-schema.sql), fall back tier by tier to shorter
-  // column lists so tracking never breaks on a not-yet-migrated DB.
+  // service-fee-promo-schema.sql, then curbside-schema.sql), fall back
+  // tier by tier to shorter column lists so tracking never breaks on a
+  // not-yet-migrated DB.
   const baseCols =
     "id, customer_phone, items_json, subtotal_cents, tax_cents, delivery_fee_cents, tip_cents, total_cents, fulfillment, delivery_address, payment_status, kitchen_status, shipday_status, created_at";
   const stage3Cols = `${baseCols}, delivery_provider, delivery_status, delivery_markup_cents`;
   const feeCols = `${stage3Cols}, service_fee_cents, free_delivery`;
+  const curbsideCols = `${feeCols}, car_description, customer_here_at`;
   let { data: order } = await supabase
     .from("orders")
-    .select(feeCols)
+    .select(curbsideCols)
     .eq("id", orderId)
     .maybeSingle();
+  if (!order) {
+    ({ data: order } = await supabase
+      .from("orders")
+      .select(feeCols)
+      .eq("id", orderId)
+      .maybeSingle());
+  }
   if (!order) {
     ({ data: order } = await supabase
       .from("orders")
@@ -63,6 +72,8 @@ export async function POST(req: Request) {
     delivery_markup_cents?: number;
     service_fee_cents?: number;
     free_delivery?: boolean;
+    car_description?: string | null;
+    customer_here_at?: string | null;
   }) | null;
 
   if (!full || last10(String(full.customer_phone ?? "")) !== last10(phone)) {
@@ -85,6 +96,10 @@ export async function POST(req: Request) {
       total_cents: full.total_cents,
       fulfillment: full.fulfillment,
       delivery_address: full.fulfillment === "delivery" ? full.delivery_address : null,
+      // Curbside: the car text + whether the customer has tapped
+      // "I'm here" yet (drives the button on the tracking page).
+      car_description: full.fulfillment === "curbside" ? (full.car_description ?? null) : null,
+      customer_here_at: full.customer_here_at ?? null,
       payment_status: full.payment_status,
       kitchen_status: full.kitchen_status,
       shipday_status: full.shipday_status,
