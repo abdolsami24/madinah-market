@@ -1,503 +1,398 @@
-// /api/admin — admin-controlled site state.
-// GET  (no login): public view — settings, sold-out dish ids, ACTIVE
-//      promotions. The storefront reads this on load.
-// GET  (staff token): full view — also inactive promotions.
-// POST (staff token only): actions —
-//      { action: "set_setting", key, value }
-//      { action: "set_availability", item_id, available }
-//      { action: "promo_create", title, body }
-//      { action: "promo_set_active", id, active }
-//      { action: "promo_delete", id }
-// POST returns the refreshed full state.
+// POST /api/checkout
+// Body: { items: [{id, qty}], customer_name, customer_phone, fulfillment,
+//         delivery_address?, car_description? (curbside), delivery_quote_id?,
+//         tip_percent?, tip_custom_cents?, note? }
+// The server rebuilds the order from lib/menu (browser prices are never
+// trusted), saves it as "unpaid", then either returns a Stripe Checkout URL
+// (real mode) or { test_mode: true, order_id } (test mode).
+// Delivery fee (Stage 3): NEVER from the browser and no longer from
+// distance bands — it is re-loaded from the stored DoorDash quote
+// (delivery_quote_id, created by /api/delivery-quote), verified
+// unexpired and for this exact address. The restaurant's extra
+// delivery markup is added on top, here on the server; the customer
+// is charged ONE merged "Delivery fee" (the split is stored on the
+// order and shown in the admin panel only).
+// Service Fee + Free Delivery: the general Service Fee (all orders,
+// never taxed, never waived) and the Free Delivery promotion
+// (delivery orders whose food subtotal reaches the admin's amount
+// pay $0 delivery) are likewise computed HERE from admin settings
+// and the server-built subtotal — never from client-sent values.
 
 import { NextResponse } from "next/server";
-import { supabaseConfigured, verifyKitchenUser } from "@/lib/supabase/server";
+import { buildLines, computeTotals, computeTipCents } from "@/lib/pricing";
+import { verifyQuoteForCheckout, getDeliverySettings, markupFor } from "@/lib/delivery";
+import { getFeeSettings } from "@/lib/fees";
 import {
-  getSettings,
-  setSetting,
-  isSettingKey,
-  getUnavailableIds,
-  setDishAvailability,
-  listPromotions,
-  createPromotion,
-  setPromotionActive,
-  deletePromotion,
-  getDishPhotos,
-  uploadDishPhoto,
-  deleteDishPhoto,
-  HERO_PHOTO_ID,
-  HERO_VIDEO_ID,
-  addCategory,
-  addMenuItem,
-  getHoursConfig,
-  setHoursConfig,
-} from "@/lib/admin";
-import { HOURS_SETTING_KEYS, parseHHMM } from "@/lib/hours";
-import { getMenuItem } from "@/lib/menu";
-import { getDbMenu } from "@/lib/menuDb";
-import { logAudit } from "@/lib/audit";
-import { getDeliverySettings, setDeliverySettings } from "@/lib/delivery";
-import {
-  getFeeSettings,
-  setFreeDeliverySettings,
-  setServiceFeeSettings,
-} from "@/lib/fees";
-import {
-  generatePairingCode,
-  getPrinterAdminView,
-  queueTestPrint,
-  requestRescan,
-  revokeBridge,
-  selectPrinter,
-  setPrinterCopies,
-  setPrinterEnabled,
-} from "@/lib/printer";
-import { getFreshKdsEnabled, setFreshKdsEnabled } from "@/lib/freshkds";
+  computeServiceFeeCents,
+  customerDeliveryCents,
+  freeDeliveryApplies,
+} from "@/lib/feePricing";
+import { formatCents } from "@/lib/menu";
+import { getServiceClient, supabaseConfigured, verifyCustomerUser } from "@/lib/supabase/server";
+import { getStripe, siteUrl, stripeTestMode } from "@/lib/stripe";
+import { getPointsBalance, redemptionFor, redeemPointsForOrder } from "@/lib/points";
+import { getSettings, getUnavailableIds, getHoursConfig } from "@/lib/admin";
+import { normalizeFulfillment } from "@/lib/fulfillment";
+import { getPricingMenuById } from "@/lib/menuDb";
+import { validatePickupTime } from "@/lib/hours";
+import type Stripe from "stripe";
 
 export const dynamic = "force-dynamic";
 
-async function staffState() {
-  const [
-    settings,
-    unavailable,
-    promotions,
-    photos,
-    menu,
-    hours,
-    delivery,
-    fees,
-    printer,
-    freshkdsEnabled,
-  ] = await Promise.all([
-    getSettings(),
-    getUnavailableIds(),
-    listPromotions(false),
-    getDishPhotos(),
-    getDbMenu(),
-    getHoursConfig(),
-    getDeliverySettings(),
-    getFeeSettings(),
-    getPrinterAdminView(),
-    getFreshKdsEnabled(),
-  ]);
-  return {
-    settings,
-    unavailable: [...unavailable],
-    promotions,
-    photos,
-    hours,
-    // Stage 3 delivery settings + provider switch (staff view only —
-    // the public GET below carries only the provider + Shipday fee
-    // inside its settings object; the top-level shape is unchanged).
-    delivery: {
-      max_miles: delivery.max_miles,
-      min_subtotal_cents: delivery.min_subtotal_cents,
-      markup_flat_cents: delivery.markup_flat_cents,
-      markup_percent: delivery.markup_percent,
-      provider: delivery.provider,
-      shipday_fee_cents: delivery.shipday_fee_cents,
-    },
-    // Service Fee + Free Delivery settings (staff view only, same
-    // reasoning as the delivery settings above).
-    fees: {
-      service_fee: fees.service_fee,
-      free_delivery: fees.free_delivery,
-    },
-    // Kitchen printer / print bridge (staff view only — the bridge
-    // token hash and pairing internals never leave lib/printer.ts;
-    // this view carries no secrets). `enabled` inside it is the
-    // print ON/OFF switch.
-    printer,
-    // Fresh KDS ON/OFF switch (staff view only, same reasoning).
-    freshkds_enabled: freshkdsEnabled,
-    menu: { categories: menu.categories, items: menu.items },
-  };
-}
-
-export async function GET(req: Request) {
-  const [settings, unavailable, activePromos, photos, hours, deliverySettings] =
-    await Promise.all([
-      getSettings(),
-      getUnavailableIds(),
-      listPromotions(true),
-      getDishPhotos(),
-      getHoursConfig(),
-      // Provider switch: the storefront needs to know the active
-      // delivery provider + the Shipday flat fee BEFORE checkout.
-      // getDeliverySettings is fail-soft (DoorDash + $6.99 defaults),
-      // so this can never break the public GET.
-      getDeliverySettings(),
-    ]);
-  const publicState = {
-    // The public shape stays EXACTLY the five top-level keys — the
-    // provider + Shipday fee ride INSIDE the settings object.
-    settings: {
-      ...settings,
-      delivery_provider: deliverySettings.provider,
-      shipday_delivery_fee_cents: deliverySettings.shipday_fee_cents,
-    },
-    hours,
-    unavailable: [...unavailable],
-    promotions: activePromos.map((p) => ({
-      id: p.id,
-      title: p.title,
-      body: p.body,
-      item_id: p.item_id ?? null,
-    })),
-    photos,
-  };
-  // A valid staff token upgrades the response to the full admin view.
-  if (supabaseConfigured()) {
-    const user = await verifyKitchenUser(req).catch(() => null);
-    if (user) {
-      const full = await staffState();
-      return NextResponse.json({ ...full, staff: true });
-    }
-  }
-  return NextResponse.json(publicState);
+function bad(message: string, status = 400) {
+  return NextResponse.json({ error: message }, { status });
 }
 
 export async function POST(req: Request) {
   if (!supabaseConfigured()) {
-    return NextResponse.json({ error: "Database is not configured." }, { status: 503 });
-  }
-  const user = await verifyKitchenUser(req);
-  if (!user) {
-    return NextResponse.json({ error: "Staff login required." }, { status: 401 });
-  }
-  // Dish photo upload arrives as multipart form data.
-  const contentType = req.headers.get("content-type") ?? "";
-  if (contentType.includes("multipart/form-data")) {
-    try {
-      const form = await req.formData();
-      const itemId = String(form.get("item_id") ?? "");
-      const file = form.get("file");
-      if (!itemId || !(file instanceof File)) {
-        return NextResponse.json({ error: "Missing dish or file." }, { status: 400 });
-      }
-      // The reserved hero-video id takes a video file; every other id
-      // (dishes and the hero photo) takes an image.
-      if (itemId === HERO_VIDEO_ID) {
-        if (!["video/mp4", "video/webm"].includes(file.type)) {
-          return NextResponse.json(
-            { error: "Please choose an MP4 or WebM video." },
-            { status: 400 }
-          );
-        }
-        if (file.size > 15 * 1024 * 1024) {
-          return NextResponse.json({ error: "Video is too large (max 15 MB)." }, { status: 400 });
-        }
-      } else {
-        if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) {
-          return NextResponse.json(
-            { error: "Please choose a JPG, PNG, WebP or GIF image." },
-            { status: 400 }
-          );
-        }
-        if (file.size > 5 * 1024 * 1024) {
-          return NextResponse.json({ error: "Image is too large (max 5 MB)." }, { status: 400 });
-        }
-      }
-      await uploadDishPhoto(itemId, await file.arrayBuffer(), file.type);
-      await logAudit(user.email ?? user.id, "admin.photo_upload", { item_id: itemId });
-    } catch (err) {
-      console.error("[admin] photo upload failed:", err);
-      return NextResponse.json({ error: "Photo upload failed." }, { status: 500 });
-    }
-    const full = await staffState();
-    return NextResponse.json({ ...full, staff: true });
+    return bad("Ordering is not configured yet (database). Please call the restaurant.", 503);
   }
   let body: Record<string, unknown>;
   try {
     body = (await req.json()) as Record<string, unknown>;
   } catch {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    return bad("Invalid request body");
   }
-  const actor = user.email ?? user.id;
+
+  const customer_name = String(body.customer_name ?? "").trim().slice(0, 80);
+  const customer_phone = String(body.customer_phone ?? "").trim().slice(0, 30);
+  // 'pickup' | 'curbside' | 'delivery' (lib/fulfillment). Curbside is
+  // pickup for money: it NEVER enters the delivery-quote path below.
+  const fulfillment = normalizeFulfillment(body.fulfillment);
+  const delivery_address = String(body.delivery_address ?? "").trim().slice(0, 300);
+  const car_description = String(body.car_description ?? "").trim().slice(0, 80);
+  const note = String(body.note ?? "").trim().slice(0, 200);
+
+  if (customer_name.length < 2) return bad("Please enter your name");
+  if (customer_phone.replace(/\D/g, "").length < 7) return bad("Please enter your phone number");
+  if (fulfillment === "curbside" && car_description.length < 3) {
+    return bad("Please tell us your car (color & type) so we can find you outside.");
+  }
+
+  // Admin switches: the whole system, or one fulfillment type, may be off.
+  const settings = await getSettings();
+  if (!settings.ordering_enabled) {
+    return bad("Online ordering is currently closed. Please call us at 720-763-0786.", 403);
+  }
+  if (fulfillment === "pickup" && !settings.pickup_enabled) {
+    return bad("Pickup ordering is currently off. Please choose delivery or call us.", 400);
+  }
+  if (fulfillment === "curbside" && !settings.curbside_enabled) {
+    return bad("Curbside pickup is currently off. Please choose pickup or delivery, or call us.", 400);
+  }
+  if (fulfillment === "delivery" && !settings.delivery_enabled) {
+    return bad("Delivery ordering is currently off. Please choose pickup or call us.", 400);
+  }
+
+  // Scheduled pickup ("pickup for later"): today only, inside pickup hours.
+  let scheduled_for: string | null = null;
+  if (fulfillment === "pickup" && typeof body.scheduled_for === "string" && body.scheduled_for) {
+    const problem = validatePickupTime(body.scheduled_for, new Date(), await getHoursConfig());
+    if (problem) return bad(problem);
+    scheduled_for = new Date(body.scheduled_for).toISOString();
+  }
+
+  let lines;
   try {
-    switch (body.action) {
-      case "set_setting": {
-        const key = String(body.key ?? "");
-        if (!isSettingKey(key)) throw new Error("Unknown setting");
-        await setSetting(key, body.value === true);
-        await logAudit(actor, "admin.set_setting", { key, value: body.value === true });
-        break;
-      }
-      case "set_hours": {
-        const raw =
-          body.hours && typeof body.hours === "object"
-            ? (body.hours as Record<string, unknown>)
-            : {};
-        const values: Record<string, string> = {};
-        for (const key of HOURS_SETTING_KEYS) {
-          if (parseHHMM(raw[key]) === null) {
-            throw new Error("Please fill in all eight opening and closing times.");
-          }
-          values[key] = String(raw[key]).trim();
-        }
-        const pairs: [string, string, string][] = [
-          ["hours_pickup_mon_sat_open", "hours_pickup_mon_sat_close", "Pickup (Mon–Sat)"],
-          ["hours_pickup_sun_open", "hours_pickup_sun_close", "Pickup (Sunday)"],
-          ["hours_delivery_mon_sat_open", "hours_delivery_mon_sat_close", "Delivery (Mon–Sat)"],
-          ["hours_delivery_sun_open", "hours_delivery_sun_close", "Delivery (Sunday)"],
-        ];
-        for (const [openKey, closeKey, label] of pairs) {
-          if ((parseHHMM(values[openKey]) ?? 0) >= (parseHHMM(values[closeKey]) ?? 0)) {
-            throw new Error(`${label}: closing time must be after opening time.`);
-          }
-        }
-        await setHoursConfig(values);
-        await logAudit(actor, "admin.set_hours", { ...values });
-        break;
-      }
-      case "set_delivery_settings": {
-        // Stage 3: DoorDash delivery radius cap, delivery minimum,
-        // and the extra delivery markup (flat + percent). Provider
-        // switch: provider + shipday_delivery_fee_cents are OPTIONAL
-        // in the payload — when absent they keep their current values
-        // (older panels never reset the switch by accident).
-        const max_miles = Number(body.max_miles);
-        const min_subtotal_cents = Math.floor(Number(body.min_subtotal_cents));
-        const markup_flat_cents = Math.floor(Number(body.markup_flat_cents));
-        const markup_percent = Number(body.markup_percent);
-        if (!Number.isFinite(max_miles) || max_miles < 1 || max_miles > 15) {
-          throw new Error("Delivery radius must be between 1 and 15 miles.");
-        }
-        if (!Number.isFinite(min_subtotal_cents) || min_subtotal_cents < 0 || min_subtotal_cents > 100000) {
-          throw new Error("Enter a valid delivery minimum (or 0 for off).");
-        }
-        if (!Number.isFinite(markup_flat_cents) || markup_flat_cents < 0 || markup_flat_cents > 10000) {
-          throw new Error("Enter a valid flat service fee (or 0 for off).");
-        }
-        if (!Number.isFinite(markup_percent) || markup_percent < 0 || markup_percent > 100) {
-          throw new Error("Service-fee percent must be between 0 and 100.");
-        }
-        const currentDelivery = await getDeliverySettings();
-        const provider =
-          body.provider === "shipday"
-            ? "shipday"
-            : body.provider === "doordash"
-              ? "doordash"
-              : currentDelivery.provider;
-        const shipday_fee_cents =
-          body.shipday_delivery_fee_cents === undefined
-            ? currentDelivery.shipday_fee_cents
-            : Math.floor(Number(body.shipday_delivery_fee_cents));
-        if (
-          !Number.isFinite(shipday_fee_cents) ||
-          shipday_fee_cents < 0 ||
-          shipday_fee_cents > 100000
-        ) {
-          throw new Error("Enter a valid Shipday delivery fee (or 0 for free).");
-        }
-        await setDeliverySettings({
-          max_miles,
-          min_subtotal_cents,
-          markup_flat_cents,
-          markup_percent,
-          provider,
-          shipday_fee_cents,
-        });
-        await logAudit(actor, "admin.set_delivery_settings", {
-          max_miles,
-          min_subtotal_cents,
-          markup_flat_cents,
-          markup_percent,
-          provider,
-          shipday_fee_cents,
-        });
-        break;
-      }
-      case "set_service_fee": {
-        // General Service Fee (Operations): on/off + percent-of-subtotal
-        // OR flat per order. Applies to every order; never taxed.
-        const enabled = body.enabled === true;
-        const type = body.type === "flat" ? "flat" : "percent";
-        const percent = Number(body.percent);
-        const flat_cents = Math.floor(Number(body.flat_cents));
-        if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
-          throw new Error("Service-fee percent must be between 0 and 100.");
-        }
-        if (!Number.isFinite(flat_cents) || flat_cents < 0 || flat_cents > 100000) {
-          throw new Error("Enter a valid flat service fee (or 0 for off).");
-        }
-        await setServiceFeeSettings({ enabled, type, percent, flat_cents });
-        await logAudit(actor, "admin.set_service_fee", { enabled, type, percent, flat_cents });
-        break;
-      }
-      case "set_free_delivery": {
-        // Free Delivery promotion (Promotions section): on/off +
-        // the food-subtotal amount at/above which delivery is $0.
-        const enabled = body.enabled === true;
-        const threshold_cents = Math.floor(Number(body.threshold_cents));
-        if (!Number.isFinite(threshold_cents) || threshold_cents < 0 || threshold_cents > 1000000) {
-          throw new Error("Enter a valid free-delivery amount (in dollars).");
-        }
-        if (enabled && threshold_cents <= 0) {
-          throw new Error("Set the order amount for free delivery (e.g. $50).");
-        }
-        await setFreeDeliverySettings({ enabled, threshold_cents });
-        await logAudit(actor, "admin.set_free_delivery", { enabled, threshold_cents });
-        break;
-      }
-      case "printer_generate_code": {
-        // Opens a 15-minute pairing window for the print bridge. The
-        // code itself is shown by the card (it reads it back from the
-        // staff state); the audit log records only that one was made.
-        const { expires_at } = await generatePairingCode();
-        await logAudit(actor, "printer.pairing_code", { expires_at });
-        break;
-      }
-      case "printer_revoke": {
-        // Revoke / re-pair: invalidates the bridge token and clears
-        // the bridge state. The bridge must pair again with a new code.
-        await revokeBridge();
-        await logAudit(actor, "printer.pairing_reset", {});
-        break;
-      }
-      case "printer_select": {
-        const name = String(body.printer ?? "").trim().slice(0, 120);
-        await selectPrinter(name || null);
-        await logAudit(actor, "printer.select", { printer: name || null });
-        break;
-      }
-      case "printer_rescan": {
-        await requestRescan();
-        await logAudit(actor, "printer.rescan", {});
-        break;
-      }
-      case "printer_set_copies": {
-        const copies = Math.floor(Number(body.copies));
-        if (!Number.isFinite(copies) || copies < 1 || copies > 3) {
-          throw new Error("Copies must be 1, 2 or 3.");
-        }
-        await setPrinterCopies(copies);
-        await logAudit(actor, "printer.set_copies", { copies });
-        break;
-      }
-      case "printer_test_print": {
-        await queueTestPrint();
-        await logAudit(actor, "printer.test_print", {});
-        break;
-      }
-      case "printer_set_enabled": {
-        // Print ON/OFF switch. OFF stops the bridge jobs feed handing
-        // out order tickets (test tickets still flow); ON advances
-        // the print cutoff so orders paid while OFF are skipped.
-        const enabled = body.enabled === true;
-        await setPrinterEnabled(enabled);
-        await logAudit(actor, "printer.set_enabled", { enabled });
-        break;
-      }
-      case "freshkds_set_enabled": {
-        // Fresh KDS ON/OFF switch (website orders only — Square /
-        // kiosk orders reach the screens through Square itself).
-        const enabled = body.enabled === true;
-        await setFreshKdsEnabled(enabled);
-        await logAudit(actor, "freshkds.set_enabled", { enabled });
-        break;
-      }
-      case "set_availability": {
-        const itemId = String(body.item_id ?? "");
-        const menu = await getDbMenu();
-        if (!menu.items.some((i) => i.id === itemId) && !getMenuItem(itemId)) {
-          throw new Error("Unknown dish");
-        }
-        await setDishAvailability(itemId, body.available === true);
-        await logAudit(actor, "admin.set_availability", {
-          item_id: itemId,
-          available: body.available === true,
-        });
-        break;
-      }
-      case "photo_delete": {
-        const itemId = String(body.item_id ?? "");
-        // The reserved hero ids are not menu dishes but are explicitly
-        // allowed; any other id must be a real dish.
-        if (itemId !== HERO_PHOTO_ID && itemId !== HERO_VIDEO_ID) {
-          const menu = await getDbMenu();
-          if (!menu.items.some((i) => i.id === itemId) && !getMenuItem(itemId)) {
-            throw new Error("Unknown dish");
-          }
-        }
-        await deleteDishPhoto(itemId);
-        await logAudit(actor, "admin.photo_delete", { item_id: itemId });
-        break;
-      }
-      case "promo_create": {
-        const title = String(body.title ?? "").trim().slice(0, 120);
-        const text = String(body.body ?? "").trim().slice(0, 400);
-        const itemId = String(body.item_id ?? "").trim();
-        if (!title) throw new Error("A promotion needs a title");
-        if (itemId) {
-          const menu = await getDbMenu();
-          if (!menu.items.some((i) => i.id === itemId)) {
-            throw new Error("Unknown dish for the promotion");
-          }
-        }
-        await createPromotion(title, text, itemId || null);
-        await logAudit(actor, "admin.promo_create", { title, item_id: itemId || null });
-        break;
-      }
-      case "promo_set_active": {
-        await setPromotionActive(Math.floor(Number(body.id)), body.active === true);
-        await logAudit(actor, "admin.promo_set_active", {
-          id: Math.floor(Number(body.id)),
-          active: body.active === true,
-        });
-        break;
-      }
-      case "promo_delete": {
-        await deletePromotion(Math.floor(Number(body.id)));
-        await logAudit(actor, "admin.promo_delete", { id: Math.floor(Number(body.id)) });
-        break;
-      }
-      case "add_category": {
-        const name = String(body.name ?? "").trim().slice(0, 60);
-        if (!name) throw new Error("A category needs a name");
-        await addCategory(name);
-        await logAudit(actor, "admin.add_category", { name });
-        break;
-      }
-      case "add_item": {
-        const name = String(body.name ?? "").trim().slice(0, 80);
-        const description = String(body.description ?? "").trim().slice(0, 300);
-        const price_cents = Math.floor(Number(body.price_cents));
-        const category = String(body.category ?? "").trim().slice(0, 60);
-        const number = String(body.number ?? "").trim().slice(0, 10);
-        const station = String(body.station ?? "").trim().slice(0, 40);
-        if (!name) throw new Error("A dish needs a name");
-        if (!category) throw new Error("Choose a category");
-        if (!Number.isFinite(price_cents) || price_cents < 1 || price_cents > 100000) {
-          throw new Error("Enter a valid price");
-        }
-        const newId = await addMenuItem({
-          name,
-          description,
-          price_cents,
-          category,
-          number,
-          station: station || undefined,
-        });
-        await logAudit(actor, "admin.add_item", {
-          id: newId,
-          name,
-          category,
-          price_cents,
-          station: station || "main",
-        });
-        break;
-      }
-      default:
-        return NextResponse.json({ error: "Unknown action" }, { status: 400 });
-    }
-  } catch (err) {
-    console.error("[admin] action failed:", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Action failed" },
-      { status: 400 }
-    );
+    lines = buildLines(
+      body.items as { id: string; qty: number }[],
+      await getPricingMenuById()
+    );  } catch (err) {
+    return bad(err instanceof Error ? err.message : "Invalid cart");
   }
-  const full = await staffState();
-  return NextResponse.json({ ...full, staff: true });
+
+  // Sold-out dishes (admin-marked) cannot be ordered.
+  const unavailable = await getUnavailableIds();
+  const soldOut = lines.find((l) => unavailable.has(l.id));
+  if (soldOut) {
+    return bad(`${soldOut.name} just sold out — please remove it from your cart.`);
+  }
+
+  const subtotal = lines.reduce((s, l) => s + l.line_total_cents, 0);
+
+  // Service Fee (all orders) + Free Delivery settings — fail-soft OFF.
+  const feeSettings = await getFeeSettings();
+  const service_fee_cents = computeServiceFeeCents(subtotal, feeSettings.service_fee);
+
+  // Delivery fee: what is required depends on the ACTIVE provider
+  // (Admin → Operations → Delivery; default DoorDash Drive).
+  // DoorDash mode: the fee comes ONLY from a stored DoorDash quote —
+  // the browser never sets it. The quote must be unexpired and for
+  // this exact address. The restaurant's extra markup is computed from
+  // the current admin settings at this moment.
+  // Shipday mode (provider switch): NO quote exists — the customer
+  // pays the flat Shipday fee from the delivery settings; no radius
+  // cap and no delivery minimum apply (Shipday decides coverage).
+  let delivery_fee_cents = 0;
+  let delivery_markup_cents = 0;
+  let delivery_quote_row_id: string | null = null;
+  let free_delivery = false;
+  if (fulfillment === "delivery") {
+    if (delivery_address.length < 6) return bad("Please enter the delivery address");
+    const deliverySettings = await getDeliverySettings();
+    if (deliverySettings.provider === "shipday") {
+      delivery_fee_cents = deliverySettings.shipday_fee_cents;
+      delivery_markup_cents = 0;
+      // The Free Delivery promotion zeroes the flat fee exactly like
+      // the DoorDash charge; service fee / tax / tip are unchanged.
+      free_delivery = freeDeliveryApplies(subtotal, feeSettings.free_delivery);
+    } else {
+    const quoteId = String(body.delivery_quote_id ?? "").trim();
+    if (!quoteId) {
+      return bad("Please wait for the delivery fee quote, then place your order again.");
+    }
+    const check = await verifyQuoteForCheckout(quoteId, delivery_address);
+    if (!check.ok) {
+      if (check.reason === "expired") {
+        // The storefront re-quotes and shows the new total; the
+        // customer must confirm it before paying — never charge a
+        // silently changed fee.
+        return NextResponse.json(
+          {
+            error:
+              "Your delivery quote expired, so we refreshed the fee. Please review the total and place the order again.",
+            code: "quote_expired",
+          },
+          { status: 409 }
+        );
+      }
+      if (check.reason === "address_mismatch") {
+        return bad("The delivery address changed — please wait for a new delivery quote.");
+      }
+      return bad("That delivery quote is no longer valid. Please re-enter the address to get a new quote.");
+    }
+    delivery_fee_cents = check.quote.fee_cents;
+    delivery_quote_row_id = check.quote.id;
+    if (
+      deliverySettings.min_subtotal_cents > 0 &&
+      subtotal < deliverySettings.min_subtotal_cents
+    ) {
+      return bad(
+        `Delivery orders need a food subtotal of at least ${formatCents(
+          deliverySettings.min_subtotal_cents
+        )}. Please add a little more, or choose pickup.`
+      );
+    }
+    delivery_markup_cents = markupFor(delivery_fee_cents, deliverySettings);
+    // Free Delivery promotion: decided from the STORED quote + the
+    // server-computed food subtotal — the browser's numbers play no
+    // part. The quote/fee/markup are still stored on the order (the
+    // courier is dispatched exactly as before); the customer is
+    // simply charged $0 for delivery and the restaurant absorbs it.
+    free_delivery = freeDeliveryApplies(subtotal, feeSettings.free_delivery);
+    }
+  }
+  const tip_cents = computeTipCents(
+    subtotal,
+    typeof body.tip_percent === "number" ? body.tip_percent : undefined,
+    typeof body.tip_custom_cents === "number" ? body.tip_custom_cents : undefined
+  );
+
+  // Optional: if the customer is signed in, link the order to their
+  // account so it appears in their order history. Guests simply omit the
+  // Authorization header and stay anonymous, as before.
+  const customerUser = await verifyCustomerUser(req).catch(() => null);
+
+  // Loyalty redemption (signed-in customers only): the server checks the
+  // real balance and applies whole 100-point blocks ($5.00 each) off the
+  // subtotal. The client's numbers are never trusted.
+  let discount_cents = 0;
+  let points_redeemed = 0;
+  if (body.use_points === true && customerUser) {
+    try {
+      const balance = await getPointsBalance(customerUser.id);
+      const redemption = redemptionFor(balance, subtotal);
+      discount_cents = redemption.discount_cents;
+      points_redeemed = redemption.points;
+    } catch (err) {
+      console.error("[checkout] points balance check failed:", err);
+    }
+  }
+  // The customer pays ONE merged delivery charge (pure courier fee +
+  // markup), or $0 when the Free Delivery promotion applies; the order
+  // row stores the parts separately (delivery_fee_cents stays the PURE
+  // fee — the DoorDash quote fee, or the flat Shipday fee in Shipday
+  // mode) so the admin panel can show the split / absorbed fee.
+  const customer_delivery_cents = customerDeliveryCents(
+    delivery_fee_cents,
+    delivery_markup_cents,
+    free_delivery
+  );
+  const totals = computeTotals(
+    lines,
+    customer_delivery_cents,
+    tip_cents,
+    discount_cents,
+    service_fee_cents
+  );
+
+  const supabase = getServiceClient();
+  const baseRow = {
+    user_id: customerUser?.id ?? null,
+    customer_name,
+    customer_phone,
+    items_json: lines,
+    subtotal_cents: totals.subtotal_cents,
+    discount_cents: totals.discount_cents,
+    points_redeemed,
+    tax_cents: totals.tax_cents,
+    delivery_fee_cents,
+    tip_cents: totals.tip_cents,
+    total_cents: totals.total_cents,
+    fulfillment,
+    delivery_address: fulfillment === "delivery" ? delivery_address : null,
+    scheduled_for,
+    payment_status: "unpaid",
+    kitchen_status: "new",
+  };
+  let { data: order, error } = await supabase
+    .from("orders")
+    .insert({
+      ...baseRow,
+      delivery_quote_id: delivery_quote_row_id,
+      delivery_markup_cents,
+      service_fee_cents: totals.service_fee_cents,
+      free_delivery,
+      // Curbside car text (null for pickup/delivery). Dropped by the
+      // fallback below until supabase/curbside-schema.sql has run.
+      car_description: fulfillment === "curbside" ? car_description : null,
+    })
+    .select("id")
+    .single();
+  if (error && /(delivery_|service_fee|free_delivery|car_description)/i.test(error.message)) {
+    // supabase/service-fee-promo-schema.sql not run yet — save the
+    // order without the two newest columns (totals are unchanged;
+    // only the service-fee / free-delivery record is not stored).
+    console.warn("[checkout] Service-fee columns missing — inserting without them.");
+    ({ data: order, error } = await supabase
+      .from("orders")
+      .insert({
+        ...baseRow,
+        delivery_quote_id: delivery_quote_row_id,
+        delivery_markup_cents,
+      })
+      .select("id")
+      .single());
+  }
+  if (error && /delivery_/i.test(error.message)) {
+    // supabase/stage3-schema.sql not run yet — save the order without
+    // the Stage 3 columns (the delivery still works end to end; only
+    // the quote link / markup split is not recorded).
+    console.warn("[checkout] Stage 3 columns missing — inserting without them.");
+    ({ data: order, error } = await supabase
+      .from("orders")
+      .insert(baseRow)
+      .select("id")
+      .single());
+  }
+  if (error || !order) {
+    console.error("[checkout] insert failed:", error);
+    return bad("Could not create the order. Please try again.", 500);
+  }
+  const orderId = order.id as number;
+
+  // Record the redemption in the ledger (idempotent per order).
+  if (points_redeemed > 0 && customerUser) {
+    try {
+      await redeemPointsForOrder(customerUser.id, orderId, points_redeemed);
+    } catch (err) {
+      console.error("[checkout] points redeem failed:", err);
+    }
+  }
+
+  // TEST MODE: no Stripe key — the client will call /api/test-pay next.
+  if (stripeTestMode()) {
+    return NextResponse.json({ test_mode: true, order_id: orderId });
+  }
+
+  // Real mode: Stripe Checkout with separate line items so the Stripe total
+  // equals the order total exactly.
+  try {
+    const stripe = getStripe();
+    const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = lines.map((l) => ({
+      quantity: l.qty,
+      price_data: {
+        currency: "usd",
+        // Per-unit price INCLUDING the chosen options (line_total is an
+        // exact multiple of qty by construction in buildLines).
+        unit_amount: Math.round(l.line_total_cents / l.qty),
+        product_data: {
+          name: l.options?.length
+            ? `${l.name} (${l.options.map((o) => o.name).join(", ")})`.slice(0, 120)
+            : l.name,
+        },
+      },
+    }));
+    if (totals.service_fee_cents > 0) {
+      lineItems.push({
+        quantity: 1,
+        price_data: {
+          currency: "usd",
+          unit_amount: totals.service_fee_cents,
+          product_data: { name: "Service fee" },
+        },
+      });
+    }
+    if (totals.tax_cents > 0) {
+      lineItems.push({
+        quantity: 1,
+        price_data: {
+          currency: "usd",
+          unit_amount: totals.tax_cents,
+          product_data: { name: "Sales tax (8%)" },
+        },
+      });
+    }
+    // ONE merged delivery line (DoorDash fee + extra markup). When
+    // the Free Delivery promotion applied, the charge is $0 and no
+    // line is added — the Stripe total still equals the order total.
+    if (customer_delivery_cents > 0) {
+      lineItems.push({
+        quantity: 1,
+        price_data: {
+          currency: "usd",
+          unit_amount: customer_delivery_cents,
+          product_data: { name: "Delivery fee" },
+        },
+      });
+    }
+    if (totals.tip_cents > 0) {
+      lineItems.push({
+        quantity: 1,
+        price_data: {
+          currency: "usd",
+          unit_amount: totals.tip_cents,
+          product_data: { name: "Tip — thank you!" },
+        },
+      });
+    }
+    // Loyalty discount: Stripe line items can't be negative, so use a
+    // one-time amount-off coupon — the charged total stays exact.
+    let discounts: Stripe.Checkout.SessionCreateParams.Discount[] | undefined;
+    if (totals.discount_cents > 0) {
+      const coupon = await stripe.coupons.create({
+        amount_off: totals.discount_cents,
+        currency: "usd",
+        duration: "once",
+        name: "Loyalty points",
+      });
+      discounts = [{ coupon: coupon.id }];
+    }
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      line_items: lineItems,
+      ...(discounts ? { discounts } : {}),
+      metadata: { order_id: String(orderId) },
+      success_url: `${siteUrl()}/menu?order=${orderId}&paid=1`,
+      cancel_url: `${siteUrl()}/menu?order=${orderId}&cancelled=1`,
+    });
+    await supabase
+      .from("orders")
+      .update({ stripe_session_id: session.id })
+      .eq("id", orderId);
+    return NextResponse.json({ url: session.url, order_id: orderId });
+  } catch (err) {
+    console.error("[checkout] Stripe session failed:", err);
+    return bad("Payment could not be started. Please try again.", 502);
+  }
 }
