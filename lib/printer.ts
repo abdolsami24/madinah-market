@@ -91,6 +91,8 @@ export interface TicketOrder {
   customer_phone: string | null;
   fulfillment: string;
   delivery_address: string | null;
+  /** Curbside car text — absent until supabase/curbside-schema.sql runs. */
+  car_description?: string | null;
   items_json: {
     id?: string;
     name: string;
@@ -490,7 +492,15 @@ export function buildTicketText(
   const dash = "-".repeat(W);
   lines.push(rule, center("MADINAH MARKET"), rule);
   lines.push(center(`ORDER #${order.id}`));
-  lines.push(center(order.fulfillment === "delivery" ? "DELIVERY" : "PICKUP"));
+  lines.push(
+    center(
+      order.fulfillment === "delivery"
+        ? "DELIVERY"
+        : order.fulfillment === "curbside"
+          ? "CURBSIDE"
+          : "PICKUP"
+    )
+  );
   lines.push(center(denverDateTime(order.created_at)));
   if (order.scheduled_for) {
     lines.push(center(`** PICKUP AT ${formatDenverTime(order.scheduled_for)} **`));
@@ -498,6 +508,9 @@ export function buildTicketText(
   lines.push(dash);
   if (order.customer_name?.trim()) lines.push(...wrap(`Customer: ${order.customer_name.trim()}`));
   if (order.customer_phone?.trim()) lines.push(...wrap(`Phone: ${order.customer_phone.trim()}`));
+  if (order.fulfillment === "curbside" && order.car_description?.trim()) {
+    lines.push(...wrap(`CAR: ${order.car_description.trim()}`));
+  }
   if (order.fulfillment === "delivery" && order.delivery_address?.trim()) {
     lines.push(...wrap(`DELIVERY: ${order.delivery_address.trim()}`));
   }

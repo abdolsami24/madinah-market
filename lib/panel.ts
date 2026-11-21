@@ -60,6 +60,9 @@ export interface PanelOrder {
   freshkds_status?: string | null;
   freshkds_error?: string | null;
   freshkds_sent_at?: string | null;
+  // Curbside — present once supabase/curbside-schema.sql has run.
+  car_description?: string | null;
+  customer_here_at?: string | null;
   /** Joined from delivery_quotes (mode/fee/expiry) when available. */
   delivery_quote?: {
     provider_mode: string;

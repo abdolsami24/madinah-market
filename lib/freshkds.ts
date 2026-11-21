@@ -43,6 +43,7 @@ import { getServiceClient } from "./supabase/server";
 import { normalizePhone } from "./shipday";
 import { formatCents, MENU_BY_ID } from "./menu";
 import { getPricingMenuById } from "./menuDb";
+import { freshKdsMode } from "./fulfillment";
 
 const DEFAULT_API_BASE = "https://integrations-api.ftservices.cloud";
 
@@ -227,7 +228,9 @@ export function buildFreshKdsPayload(
     // kitchen match the screen card to our order number.
     checkNumber: String(order.id),
     time: order.created_at || new Date().toISOString(),
-    mode: isDelivery ? "Delivery" : "Pickup",
+    // "Pickup" | "Curbside" | "Delivery" (lib/fulfillment) — curbside
+    // orders ride to the screens as Curbside, with no delivery data.
+    mode: freshKdsMode(order.fulfillment),
     terminal: "Madinah Market website",
     onlineOrder: true,
     isPaid: true,

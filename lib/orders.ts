@@ -31,6 +31,10 @@ export type OrderRow = NotifyOrder &
     // Fresh KDS — optional because the columns arrive with
     // supabase/freshkds-schema.sql; absent on a not-yet-migrated DB.
     scheduled_for?: string | null;
+    // Curbside — optional because the columns arrive with
+    // supabase/curbside-schema.sql; absent on a not-yet-migrated DB.
+    car_description?: string | null;
+    customer_here_at?: string | null;
     freshkds_status?: string | null;
     freshkds_error?: string | null;
     freshkds_sent_at?: string | null;

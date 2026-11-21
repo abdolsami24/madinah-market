@@ -66,16 +66,32 @@ export function trackUrl(orderId: number): string {
 /** (a) Order paid/confirmed — sent once from markOrderPaid. */
 export async function smsOrderConfirmed(order: SmsOrder): Promise<void> {
   if (!order.customer_phone) return;
-  const kind = order.fulfillment === "delivery" ? "delivery" : "pickup";
+  const kind =
+    order.fulfillment === "delivery"
+      ? "delivery"
+      : order.fulfillment === "curbside"
+        ? "curbside"
+        : "pickup";
   await sendSms(
     order.customer_phone,
     `Madinah Market: Thank you! Your ${kind} order #${order.id} is confirmed. Track it here: ${trackUrl(order.id)}`
   );
 }
 
-/** (b) Pickup order marked ready by the kitchen. */
+/**
+ * (b) Pickup / curbside order marked ready by the kitchen. The pickup
+ * wording is unchanged; curbside tells the customer the food is being
+ * brought out to their car.
+ */
 export async function smsPickupReady(order: SmsOrder): Promise<void> {
   if (!order.customer_phone) return;
+  if (order.fulfillment === "curbside") {
+    await sendSms(
+      order.customer_phone,
+      `Madinah Market: Good news — your order #${order.id} is READY and we're bringing it out to your car now. 🚗`
+    );
+    return;
+  }
   await sendSms(
     order.customer_phone,
     `Madinah Market: Good news — your order #${order.id} is READY for pickup at 3126 S Parker Rd, Aurora. See you soon!`

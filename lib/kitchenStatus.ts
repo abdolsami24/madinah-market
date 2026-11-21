@@ -61,19 +61,21 @@ export function feedKitchenStatus(order: {
 }
 
 /**
- * The pickup-ready SMS rule, shared by /api/kitchen/status and the
+ * The ready-SMS rule, shared by /api/kitchen/status and the
  * admin panel's set_order_status. The text fires EXACTLY ONCE per
  * order: on the first transition INTO 'ready' or 'completed' (the
  * one-tap completion), and never again — not on a repeat tap, not when
  * a legacy 'ready' order is later completed (it was already texted
- * when it became ready), and never for delivery orders.
+ * when it became ready), and never for delivery orders. Pickup AND
+ * curbside orders get the text (curbside with its own wording — see
+ * lib/sms.ts).
  */
 export function shouldSendReadySms(
   prevStatus: string,
   nextStatus: string,
   fulfillment: string
 ): boolean {
-  if (fulfillment !== "pickup") return false;
+  if (fulfillment !== "pickup" && fulfillment !== "curbside") return false;
   const intoReadyState = nextStatus === "ready" || nextStatus === "completed";
   const alreadyReadyState = prevStatus === "ready" || prevStatus === "completed";
   return intoReadyState && !alreadyReadyState;

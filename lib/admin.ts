@@ -15,12 +15,15 @@ export interface SiteSettings {
   ordering_enabled: boolean;
   pickup_enabled: boolean;
   delivery_enabled: boolean;
+  /** Curbside pickup (2026-11-20) — ships ON; OFF hides the choice. */
+  curbside_enabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: SiteSettings = {
   ordering_enabled: true,
   pickup_enabled: true,
   delivery_enabled: true,
+  curbside_enabled: true,
 };
 
 const SETTING_KEYS = Object.keys(DEFAULT_SETTINGS) as (keyof SiteSettings)[];
