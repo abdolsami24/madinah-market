@@ -48,6 +48,8 @@ interface PrinterView {
   test_pending: boolean;
   last_error: string | null;
   parked_count: number;
+  /** Print ON/OFF switch (absent in older payloads = ON). */
+  enabled?: boolean;
 }
 
 interface AdminState {
@@ -76,6 +78,8 @@ interface AdminState {
     free_delivery: { enabled: boolean; threshold_cents: number };
   };
   printer?: PrinterView;
+  /** Fresh KDS ON/OFF switch (absent in older payloads = ON). */
+  freshkds_enabled?: boolean;
   menu: { categories: string[]; items: MenuItem[] };
 }
 
@@ -1038,7 +1042,9 @@ export default function AdminPanel() {
                         }`
                       : selectedOrder.freshkds_status === "failed"
                         ? "Failed"
-                        : "Not sent — Fresh KDS not configured"}
+                        : selectedOrder.freshkds_status === "off"
+                          ? "Off — KDS switch is OFF"
+                          : "Not sent — Fresh KDS not configured"}
                   </strong>
                   {selectedOrder.freshkds_error && (
                     <>
@@ -1926,6 +1932,33 @@ export default function AdminPanel() {
         </section>
         <section className="ops-card">
           <h3>Kitchen printer</h3>
+          <div className="cart-line">
+            <span>
+              Print order tickets:{" "}
+              <strong>{printer?.enabled === false ? "OFF" : "ON"}</strong>
+            </span>
+            <button
+              type="button"
+              className="ops-btn"
+              disabled={busy}
+              onClick={() =>
+                act(
+                  { action: "printer_set_enabled", enabled: printer?.enabled === false },
+                  printer?.enabled === false
+                    ? "Printing is ON — new paid orders will print again."
+                    : "Printing is OFF — order tickets will not print until you turn this back on."
+                )
+              }
+            >
+              Turn {printer?.enabled === false ? "ON" : "OFF"}
+            </button>
+          </div>
+          {printer?.enabled === false ? (
+            <p className="printer-error">
+              Printing is OFF — paid orders will not print. Test print below still
+              works, and orders still appear on the kitchen page and Fresh KDS.
+            </p>
+          ) : null}
           {!printer || !printer.paired ? (
             <>
               <p className="ops-muted">
@@ -2128,6 +2161,45 @@ export default function AdminPanel() {
               </p>
             </>
           )}
+        </section>
+        <section className="ops-card">
+          <h3>Fresh KDS screen</h3>
+          <div className="cart-line">
+            <span>
+              Send website orders to Fresh KDS:{" "}
+              <strong>{state.freshkds_enabled === false ? "OFF" : "ON"}</strong>
+            </span>
+            <button
+              type="button"
+              className="ops-btn"
+              disabled={busy}
+              onClick={() =>
+                act(
+                  {
+                    action: "freshkds_set_enabled",
+                    enabled: state.freshkds_enabled === false,
+                  },
+                  state.freshkds_enabled === false
+                    ? "Fresh KDS is ON — new paid website orders will appear on the screens."
+                    : "Fresh KDS is OFF — new paid website orders will not be sent to the screens."
+                )
+              }
+            >
+              Turn {state.freshkds_enabled === false ? "ON" : "OFF"}
+            </button>
+          </div>
+          {state.freshkds_enabled === false ? (
+            <p className="printer-error">
+              KDS switch is OFF — new paid website orders are not sent to the Fresh
+              KDS screens (each order shows “Off — KDS switch is OFF” in its details).
+            </p>
+          ) : null}
+          <p className="ops-muted">
+            This switch controls <strong>website orders only</strong>. Orders from
+            Square / the kiosk reach the Fresh screens through Square itself and are
+            not affected. Orders paid while OFF are not sent later — turning it back
+            ON affects new orders only.
+          </p>
         </section>
         <section className="ops-card">
           <h3>Free delivery promotion</h3>
