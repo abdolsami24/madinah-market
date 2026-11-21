@@ -86,13 +86,16 @@ async function staffState() {
     promotions,
     photos,
     hours,
-    // Stage 3 delivery settings (staff view only — the public GET
-    // shape below is unchanged).
+    // Stage 3 delivery settings + provider switch (staff view only —
+    // the public GET below carries only the provider + Shipday fee
+    // inside its settings object; the top-level shape is unchanged).
     delivery: {
       max_miles: delivery.max_miles,
       min_subtotal_cents: delivery.min_subtotal_cents,
       markup_flat_cents: delivery.markup_flat_cents,
       markup_percent: delivery.markup_percent,
+      provider: delivery.provider,
+      shipday_fee_cents: delivery.shipday_fee_cents,
     },
     // Service Fee + Free Delivery settings (staff view only, same
     // reasoning as the delivery settings above).
@@ -112,15 +115,27 @@ async function staffState() {
 }
 
 export async function GET(req: Request) {
-  const [settings, unavailable, activePromos, photos, hours] = await Promise.all([
-    getSettings(),
-    getUnavailableIds(),
-    listPromotions(true),
-    getDishPhotos(),
-    getHoursConfig(),
-  ]);
+  const [settings, unavailable, activePromos, photos, hours, deliverySettings] =
+    await Promise.all([
+      getSettings(),
+      getUnavailableIds(),
+      listPromotions(true),
+      getDishPhotos(),
+      getHoursConfig(),
+      // Provider switch: the storefront needs to know the active
+      // delivery provider + the Shipday flat fee BEFORE checkout.
+      // getDeliverySettings is fail-soft (DoorDash + $6.99 defaults),
+      // so this can never break the public GET.
+      getDeliverySettings(),
+    ]);
   const publicState = {
-    settings,
+    // The public shape stays EXACTLY the five top-level keys — the
+    // provider + Shipday fee ride INSIDE the settings object.
+    settings: {
+      ...settings,
+      delivery_provider: deliverySettings.provider,
+      shipday_delivery_fee_cents: deliverySettings.shipday_fee_cents,
+    },
     hours,
     unavailable: [...unavailable],
     promotions: activePromos.map((p) => ({
@@ -237,7 +252,10 @@ export async function POST(req: Request) {
       }
       case "set_delivery_settings": {
         // Stage 3: DoorDash delivery radius cap, delivery minimum,
-        // and the extra delivery markup (flat + percent).
+        // and the extra delivery markup (flat + percent). Provider
+        // switch: provider + shipday_delivery_fee_cents are OPTIONAL
+        // in the payload — when absent they keep their current values
+        // (older panels never reset the switch by accident).
         const max_miles = Number(body.max_miles);
         const min_subtotal_cents = Math.floor(Number(body.min_subtotal_cents));
         const markup_flat_cents = Math.floor(Number(body.markup_flat_cents));
@@ -254,17 +272,39 @@ export async function POST(req: Request) {
         if (!Number.isFinite(markup_percent) || markup_percent < 0 || markup_percent > 100) {
           throw new Error("Service-fee percent must be between 0 and 100.");
         }
+        const currentDelivery = await getDeliverySettings();
+        const provider =
+          body.provider === "shipday"
+            ? "shipday"
+            : body.provider === "doordash"
+              ? "doordash"
+              : currentDelivery.provider;
+        const shipday_fee_cents =
+          body.shipday_delivery_fee_cents === undefined
+            ? currentDelivery.shipday_fee_cents
+            : Math.floor(Number(body.shipday_delivery_fee_cents));
+        if (
+          !Number.isFinite(shipday_fee_cents) ||
+          shipday_fee_cents < 0 ||
+          shipday_fee_cents > 100000
+        ) {
+          throw new Error("Enter a valid Shipday delivery fee (or 0 for free).");
+        }
         await setDeliverySettings({
           max_miles,
           min_subtotal_cents,
           markup_flat_cents,
           markup_percent,
+          provider,
+          shipday_fee_cents,
         });
         await logAudit(actor, "admin.set_delivery_settings", {
           max_miles,
           min_subtotal_cents,
           markup_flat_cents,
           markup_percent,
+          provider,
+          shipday_fee_cents,
         });
         break;
       }
