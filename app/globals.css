@@ -972,6 +972,15 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
   gap: 0.8rem;
   align-items: center;
   margin-top: 0.9rem;
+  /* Usability item 4: pinned to the bottom of the scrolling popup
+     card so quantity + "Add to Cart" stay reachable while the
+     customer scrolls through the option groups. */
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  background: var(--surface);
+  padding: 0.65rem 0 0.15rem;
+  box-shadow: 0 -10px 14px -12px rgba(28, 24, 19, 0.35);
 }
 .add-btn.popup-add {
   flex: 1;
