@@ -1,6 +1,7 @@
 // Owner order-notification email — best-effort, never blocks an order.
 // If EMAIL_API_URL + EMAIL_API_KEY are set (for example a Resend-style HTTP
 // API that accepts {from, to, subject, text}), the email is sent through it.
+// The sender is EMAIL_FROM (default: Madinah Market <orders@taqwaacenter.com>).
 // Otherwise the email is written to the server log so nothing is silently lost.
 
 import { formatCents } from "./menu";
@@ -69,13 +70,14 @@ export async function notifyOwner(order: NotifyOrder): Promise<void> {
 
   const apiUrl = process.env.EMAIL_API_URL;
   const apiKey = process.env.EMAIL_API_KEY;
+  const from = process.env.EMAIL_FROM || "Madinah Market <orders@taqwaacenter.com>";
   if (apiUrl && apiKey) {
     try {
       await fetch(apiUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
-          from: "Madinah Market Website <orders@madinahmarket.example>",
+          from,
           to,
           subject,
           text,
