@@ -93,6 +93,8 @@ export interface TicketOrder {
   delivery_address: string | null;
   /** Curbside car text — absent until supabase/curbside-schema.sql runs. */
   car_description?: string | null;
+  /** Order-level checkout note — absent until supabase/order-note-schema.sql runs. */
+  note?: string | null;
   items_json: {
     id?: string;
     name: string;
@@ -520,6 +522,9 @@ export function buildTicketText(
   if (order.fulfillment === "delivery" && order.delivery_address?.trim()) {
     lines.push(...wrap(`DELIVERY: ${order.delivery_address.trim()}`));
   }
+  if (order.note?.trim()) {
+    lines.push(...wrap(`NOTE: ${order.note.trim()}`));
+  }
   lines.push(dash);
   for (const line of order.items_json ?? []) {
     const num = line.id ? numbers?.[line.id] : undefined;
@@ -897,6 +902,10 @@ async function resolveMenuNumbers(): Promise<Record<string, string>> {
 export async function bridgeJobs(store: PrinterStore): Promise<PrintJob[]> {
   const { state, config } = store;
   const supabase = getServiceClient();
+  // select("*") is deliberate: it picks up optional columns (car
+  // text, the order note, ...) whenever their schema file has run and
+  // simply omits them before that — printing can never break on a
+  // not-yet-migrated database.
   const { data, error } = await supabase
     .from("orders")
     .select("*")

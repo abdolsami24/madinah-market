@@ -14,6 +14,8 @@ export interface NotifyOrder {
   delivery_address: string | null;
   /** Curbside: the customer's car (absent until curbside-schema.sql). */
   car_description?: string | null;
+  /** Order-level checkout note (absent until order-note-schema.sql). */
+  note?: string | null;
   items_json: { name: string; qty: number; line_total_cents: number }[];
   subtotal_cents: number;
   /** General Service Fee charged on the order (0 when off). */
@@ -40,6 +42,7 @@ export async function notifyOwner(order: NotifyOrder): Promise<void> {
   const text = [
     `New order #${order.id} — ${order.fulfillment.toUpperCase()} (${order.payment_status})`,
     `Customer: ${order.customer_name ?? "-"}  Phone: ${order.customer_phone ?? "-"}`,
+    order.note?.trim() ? `Note: ${order.note.trim()}` : "",
     order.fulfillment === "delivery" ? `Delivery address: ${order.delivery_address ?? "-"}` : "",
     order.fulfillment === "curbside"
       ? `Car (curbside): ${order.car_description ?? "-"}`

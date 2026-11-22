@@ -65,6 +65,8 @@ export interface PanelOrder {
   // Curbside — present once supabase/curbside-schema.sql has run.
   car_description?: string | null;
   customer_here_at?: string | null;
+  // Order note — present once supabase/order-note-schema.sql has run.
+  note?: string | null;
   /** Joined from delivery_quotes (mode/fee/expiry) when available. */
   delivery_quote?: {
     provider_mode: string;

@@ -36,6 +36,11 @@ export type OrderRow = NotifyOrder &
     // supabase/curbside-schema.sql; absent on a not-yet-migrated DB.
     car_description?: string | null;
     customer_here_at?: string | null;
+    // Order-level checkout note rides along via NotifyOrder (lib/email)
+    // — optional because the column arrives with
+    // supabase/order-note-schema.sql. getOrder's select("*") picks it
+    // up when present and omits it before, so markOrderPaid passes it
+    // to the owner email fail-softly with no extra handling here.
     freshkds_status?: string | null;
     freshkds_error?: string | null;
     freshkds_sent_at?: string | null;
