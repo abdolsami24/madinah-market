@@ -490,7 +490,13 @@ export function buildTicketText(
   const lines: string[] = [];
   const rule = "=".repeat(W);
   const dash = "-".repeat(W);
-  lines.push(rule, center("MADINAH MARKET"), rule);
+  lines.push(
+    rule,
+    center("MADINAH MARKET"),
+    center("www.taqwaacenter.com"),
+    center("720-763-0786"),
+    rule
+  );
   lines.push(center(`ORDER #${order.id}`));
   lines.push(
     center(
@@ -558,6 +564,8 @@ export function buildTestTicketText(nowIso: string): string {
   const lines = [
     rule,
     center("MADINAH MARKET"),
+    center("www.taqwaacenter.com"),
+    center("720-763-0786"),
     rule,
     "",
     center("*** TEST PRINT ***"),
