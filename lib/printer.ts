@@ -527,7 +527,12 @@ export function buildTicketText(
       num && !line.name.startsWith("#") ? `${num} ${line.name}` : line.name;
     lines.push(...moneyRow(`${line.qty} x ${name}`, formatCents(line.line_total_cents)));
     for (const opt of line.options ?? []) {
-      lines.push(...wrap(`+ ${opt.name}`, 2, 4));
+      lines.push(
+        ...moneyRow(
+          `  + ${opt.name}`,
+          formatCents((opt.price_delta_cents ?? 0) * line.qty)
+        )
+      );
     }
     if (line.instructions?.trim()) {
       lines.push(...wrap(`NOTE: ${line.instructions.trim()}`, 2, 4));
