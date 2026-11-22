@@ -256,9 +256,30 @@ export async function POST(req: Request) {
       // Curbside car text (null for pickup/delivery). Dropped by the
       // fallback below until supabase/curbside-schema.sql has run.
       car_description: fulfillment === "curbside" ? car_description : null,
+      // Order-level checkout note (null when blank). Dropped by the
+      // fallback below until supabase/order-note-schema.sql has run —
+      // an order must never fail to save because of the note.
+      note: note || null,
     })
     .select("id")
     .single();
+  if (error && /note/i.test(error.message)) {
+    // supabase/order-note-schema.sql not run yet — save the order
+    // without the note (everything else about the order is unchanged).
+    console.warn("[checkout] Note column missing — inserting without it.");
+    ({ data: order, error } = await supabase
+      .from("orders")
+      .insert({
+        ...baseRow,
+        delivery_quote_id: delivery_quote_row_id,
+        delivery_markup_cents,
+        service_fee_cents: totals.service_fee_cents,
+        free_delivery,
+        car_description: fulfillment === "curbside" ? car_description : null,
+      })
+      .select("id")
+      .single());
+  }
   if (error && /(delivery_|service_fee|free_delivery|car_description)/i.test(error.message)) {
     // supabase/service-fee-promo-schema.sql not run yet — save the
     // order without the two newest columns (totals are unchanged;
