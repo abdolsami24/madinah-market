@@ -53,6 +53,8 @@ interface KitchenOrder {
   /** Curbside (absent until supabase/curbside-schema.sql runs). */
   car_description?: string | null;
   customer_here_at?: string | null;
+  /** Order-level checkout note (absent until supabase/order-note-schema.sql runs). */
+  note?: string | null;
   scheduled_for: string | null;
   payment_status: string;
   kitchen_status: string;
@@ -405,6 +407,9 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
                         ? ` — since ${new Date(o.customer_here_at).toLocaleTimeString()}`
                         : ""}
                     </div>
+                  )}
+                  {o.note?.trim() && (
+                    <div style={{ fontWeight: 700 }}>📝 NOTE: {o.note}</div>
                   )}
                   <div style={{ color: "#cbbfa8", fontSize: "0.95rem" }}>
                     {new Date(o.created_at).toLocaleTimeString()} ·{" "}

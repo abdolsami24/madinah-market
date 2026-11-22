@@ -136,6 +136,8 @@ interface PanelOrder {
   // Curbside — absent until supabase/curbside-schema.sql runs.
   car_description?: string | null;
   customer_here_at?: string | null;
+  // Order note — absent until supabase/order-note-schema.sql runs.
+  note?: string | null;
   delivery_quote?: {
     provider_mode: string;
     fee_cents: number;
@@ -927,6 +929,12 @@ export default function AdminPanel() {
                           ? fmtTime(selectedOrder.customer_here_at)
                           : "Not yet"}
                       </strong>
+                    </>
+                  )}
+                  {selectedOrder.note?.trim() && (
+                    <>
+                      <span>Note</span>
+                      <strong>📝 {selectedOrder.note}</strong>
                     </>
                   )}
                   {selectedOrder.scheduled_for && (
