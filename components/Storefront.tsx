@@ -240,26 +240,38 @@ export default function Storefront({
     checkoutScrollRef.current?.scrollTo({ top: 0 });
   }, [checkoutStep, showCheckout]);
 
-  // The checkout sheet sticks directly under the header — feed CSS the
-  // header's real measured height (it differs phone vs desktop), so
-  // the sheet lines up exactly on every device.
+  // The checkout sheet is a fixed screen that must start exactly
+  // where the header ends and fill the rest of the window. Measure
+  // both in real pixels (no guessed offsets): park the header at the
+  // top, read its bottom edge, size the sheet to the window, and lock
+  // the page behind it. Closing restores the page as it was.
+  const [sheetBox, setSheetBox] = useState<{
+    top: number;
+    height: number;
+  } | null>(null);
   useEffect(() => {
+    if (!showCheckout) return;
     const header = document.querySelector<HTMLElement>(".site-header");
-    if (!header) return;
-    const measure = () =>
-      document.documentElement.style.setProperty(
-        "--sheet-top",
-        `${Math.round(header.getBoundingClientRect().height)}px`
-      );
+    const measure = () => {
+      const bottom = header
+        ? Math.round(header.getBoundingClientRect().bottom)
+        : 88;
+      setSheetBox({
+        top: bottom,
+        height: Math.max(240, window.innerHeight - bottom),
+      });
+    };
+    const prevScroll = window.scrollY;
+    const prevOverflow = document.body.style.overflow;
+    window.scrollTo(0, document.documentElement.scrollHeight);
     measure();
+    document.body.style.overflow = "hidden";
     window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, []);
-
-  // Opening checkout: nudge the page up so the info strip scrolls away
-  // and the header + checkout screen sit flush at the top.
-  useEffect(() => {
-    if (showCheckout) window.scrollBy(0, 240);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("resize", measure);
+      window.scrollTo(0, prevScroll);
+    };
   }, [showCheckout]);
 
   // The header bag button (TopNav) asks us to open the checkout panel —
@@ -1320,7 +1332,15 @@ export default function Storefront({
         </div>
 
         {showCheckout && (
-          <section className="panel checkout-sheet" id="checkout">
+          <section
+            className="panel checkout-sheet"
+            id="checkout"
+            style={
+              sheetBox
+                ? { top: sheetBox.top, height: sheetBox.height }
+                : undefined
+            }
+          >
             <div className="sheet-inner">
             <div className="panel-head">
               <h3>
