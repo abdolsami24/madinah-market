@@ -55,7 +55,7 @@ export default function TopNav() {
       <div className="topbar">
         <span>📍 3126 S Parker Rd, Aurora, CO 80014</span>
         <a href="tel:+17207630786">📞 720-763-0786</a>
-        <span>🕙 Mon–Thu 10–7:50 · Fri–Sat 10–8 · Sun 10–7</span>
+        <span>🕙 Pickup: Mon–Sat 10–7:45 · Sun 10–6:45</span>
       </div>
       <header className="site-header">
         <div className="header-inner">
@@ -67,9 +67,21 @@ export default function TopNav() {
           </Link>
           <span className="halal-badge">100% HALAL</span>
           <span className="header-spacer" />
-          <Link href="/menu" className="bag-btn">
-            🛒 {count > 0 ? `Cart · ${count}` : "Order now"}
-          </Link>
+          {pathname === "/menu" && count > 0 ? (
+            <button
+              type="button"
+              className="bag-btn"
+              onClick={() =>
+                window.dispatchEvent(new CustomEvent("mm:open-checkout"))
+              }
+            >
+              🛒 Cart · {count}
+            </button>
+          ) : (
+            <Link href="/menu" className="bag-btn">
+              🛒 {count > 0 ? `Cart · ${count}` : "Order now"}
+            </Link>
+          )}
           <button
             type="button"
             className="nav-toggle"

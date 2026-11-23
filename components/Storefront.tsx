@@ -232,6 +232,28 @@ export default function Storefront({
     if (!showCheckout) setCheckoutStep(1);
   }, [showCheckout]);
 
+  // The header bag button (TopNav) asks us to open the checkout panel —
+  // the same thing the bottom bar's "Checkout →" does.
+  const openCheckoutRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    openCheckoutRef.current = () => {
+      if (lines.length === 0) return;
+      setShowCheckout(true);
+      setTimeout(
+        () =>
+          document
+            .getElementById("checkout")
+            ?.scrollIntoView({ behavior: "smooth" }),
+        50
+      );
+    };
+  });
+  useEffect(() => {
+    const handler = () => openCheckoutRef.current();
+    window.addEventListener("mm:open-checkout", handler);
+    return () => window.removeEventListener("mm:open-checkout", handler);
+  }, []);
+
   // Admin-controlled site state: switches, sold-out dishes, promotions,
   // uploaded dish photos. Loaded once; the site fails open (all ordering
   // on, everything available) if it cannot be reached.
@@ -1130,7 +1152,7 @@ export default function Storefront({
           </div>
         )}
 
-        <div className="menu-layout">
+        <div className="menu-layout" id="menu-top">
           <aside className="menu-sidebar">
             <h2 className="sidebar-title">Menu</h2>
             <button
@@ -1198,34 +1220,40 @@ export default function Storefront({
 
         {showCheckout && (
           <section className="panel" id="checkout">
-            <h3>Your order</h3>
+            <div className="panel-head">
+              <h3>Your order</h3>
+              <button
+                type="button"
+                className="back-link"
+                onClick={() => {
+                  setShowCheckout(false);
+                  setTimeout(
+                    () =>
+                      document
+                        .getElementById("menu-top")
+                        ?.scrollIntoView({ behavior: "smooth" }),
+                    50
+                  );
+                }}
+              >
+                ← Back to menu
+              </button>
+            </div>
             {checkoutStep === 2 ? (
               <>
+                <button
+                  type="button"
+                  className="back-link"
+                  onClick={() => {
+                    setError("");
+                    setCheckoutStep(1);
+                  }}
+                >
+                  ← Back to details
+                </button>
                 {renderLines(false)}
                 {breakdownJsx}
                 {error && <div className="form-error">{error}</div>}
-                <div className="step-actions">
-                  <button
-                    type="button"
-                    className="step-back"
-                    onClick={() => {
-                      setError("");
-                      setCheckoutStep(1);
-                    }}
-                  >
-                    ← Back
-                  </button>
-                  <button
-                    type="button"
-                    className="checkout-btn"
-                    disabled={placing || orderingClosed || lines.length === 0}
-                    onClick={placeOrder}
-                  >
-                    {placing
-                      ? "Placing order…"
-                      : `Place order — ${formatCents(total)}`}
-                  </button>
-                </div>
               </>
             ) : (
               renderLines(true)
@@ -1581,16 +1609,6 @@ export default function Storefront({
             {breakdownJsx}
 
             {error && <div className="form-error">{error}</div>}
-            <div className="step-actions">
-              <button
-                type="button"
-                className="checkout-btn"
-                disabled={orderingClosed || checkoutBlocked || lines.length === 0}
-                onClick={goToReview}
-              >
-                Review order →
-              </button>
-            </div>
               </>
             )}
               </>
@@ -1630,32 +1648,70 @@ export default function Storefront({
       )}
 
       {itemCount > 0 && !showCheckout && (
-        <div className="cart-bar">
-          <span className="total">
-            🛒 {itemCount} item{itemCount === 1 ? "" : "s"} · {formatCents(subtotal)}
-          </span>
-          {orderingClosed ? (
-            <span>🔴 Ordering closed</span>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setShowCheckout(true);
-                setTimeout(() => document.getElementById("checkout")?.scrollIntoView({ behavior: "smooth" }), 50);
-              }}
-            >
-              Checkout →
-            </button>
-          )}
-        </div>
+        <>
+          <div className="cart-bar">
+            <span className="total">
+              🛒 {itemCount} item{itemCount === 1 ? "" : "s"} · Subtotal {formatCents(subtotal)}
+            </span>
+            {orderingClosed ? (
+              <span>🔴 Ordering closed</span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCheckout(true);
+                  setTimeout(() => document.getElementById("checkout")?.scrollIntoView({ behavior: "smooth" }), 50);
+                }}
+              >
+                Checkout →
+              </button>
+            )}
+          </div>
+          <div className="cartbar-spacer" />
+        </>
       )}
-      {showCheckout && (
-        <div className="cart-bar">
-          <span className="total">Total {formatCents(total)}</span>
-          <button type="button" onClick={() => setShowCheckout(false)}>
-            ← Back to menu
-          </button>
-        </div>
+      {showCheckout && itemCount > 0 && (
+        <>
+          <div className="cart-bar">
+            <span className="total">Total {formatCents(total)}</span>
+            {checkoutStep === 1 ? (
+              <button
+                type="button"
+                disabled={!formOpen || orderingClosed || checkoutBlocked || lines.length === 0}
+                onClick={() => {
+                  goToReview();
+                  setTimeout(
+                    () =>
+                      document
+                        .querySelector(".form-error")
+                        ?.scrollIntoView({ behavior: "smooth", block: "center" }),
+                    120
+                  );
+                }}
+              >
+                Review order →
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={placing || orderingClosed || lines.length === 0}
+                onClick={() => {
+                  void placeOrder();
+                  setTimeout(
+                    () =>
+                      document
+                        .querySelector(".form-error")
+                        ?.scrollIntoView({ behavior: "smooth", block: "center" }),
+                    120
+                  );
+                }}
+              >
+                {placing ? "Placing order…" : "Place order"}
+              </button>
+            )}
+          </div>
+          <div className="cartbar-spacer" />
+        </>
       )}
     </>
   );
