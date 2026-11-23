@@ -695,11 +695,14 @@ html { scroll-padding-bottom: 7rem; }
    the top, the middle scrolls on its own, and the action bar is BUILT
    INTO the bottom of the screen, so it can never float over a field. */
 .panel.checkout-sheet {
-  /* In-flow sticky, NOT fixed: the sheet sits in the page directly
-     under the header and sticks there — its top is the header's real
-     measured height (set as --sheet-top by Storefront), so it lines
-     up on every phone and desktop with no guessed offset. */
-  position: sticky;
+  /* Fixed screen under the header. Storefront measures the header's
+     real bottom edge + the real window height and sets top/height in
+     pixels inline — the values below are only a first-frame fallback.
+     (Guessed offsets and sticky docking both misaligned the screen:
+     the bottom bar slid off-screen and the head floated.) */
+  position: fixed;
+  left: 0;
+  right: 0;
   top: var(--sheet-top, 5.5rem);
   height: calc(100dvh - var(--sheet-top, 5.5rem));
   z-index: 40;
@@ -716,7 +719,8 @@ html { scroll-padding-bottom: 7rem; }
    box bled over the top of the checkout screen. */
 body:has(.checkout-sheet) .testmode-banner,
 body:has(.checkout-sheet) .closed-banner,
-body:has(.checkout-sheet) .promo-box { display: none !important; }
+body:has(.checkout-sheet) .promo-box,
+body:has(.checkout-sheet) .success-banner { display: none !important; }
 .sheet-inner {
   width: 100%;
   max-width: 880px;
@@ -782,16 +786,15 @@ button.sheet-bar:disabled { opacity: 0.55; cursor: not-allowed; }
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  /* Bars matching 2026-11-22: "Your order" + Back to menu stay pinned
-     under the sticky header while the checkout form scrolls — the
-     reference site's pinned Back + title block. */
-  position: sticky;
-  top: 5.6rem;
-  z-index: 20;
+  /* NOT sticky: the head is a fixed row of the checkout sheet (a flex
+     column), so it is always on screen by construction. A sticky head
+     floated over the form's first rows whenever the page scrolled. */
   background: var(--surface);
   padding: 0.4rem 0;
   border-bottom: 1px solid var(--hairline);
 }
+.panel-head h3 { min-width: 0; }
+.panel-head .linklike { flex: none; }
 /* Ali-style checkout bar: one centred button, no total text — the
    money lives in the panel's breakdown and the header bag pill. */
 .cart-bar--action { justify-content: center; padding: 0.5rem; }
