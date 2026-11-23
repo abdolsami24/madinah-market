@@ -359,6 +359,26 @@ export async function POST(req: Request) {
     }
   }
 
+  // Remember this delivery address on the customer's account, so
+  // the next checkout — and every reorder — starts with it already
+  // filled in. The storefront has always prefilled the address from
+  // profiles.default_address, but nothing ever saved it there, so
+  // customers typed it again every time. Fail-soft: a failed save
+  // must never break a checkout.
+  if (customerUser?.id && fulfillment === "delivery" && delivery_address) {
+    try {
+      const { error: addrError } = await supabase
+        .from("profiles")
+        .update({ default_address: delivery_address })
+        .eq("id", customerUser.id);
+      if (addrError) {
+        console.warn("[checkout] address save failed:", addrError.message);
+      }
+    } catch (err) {
+      console.warn("[checkout] address save failed:", err);
+    }
+  }
+
   // TEST MODE: no Stripe key — the client will call /api/test-pay next.
   if (stripeTestMode()) {
     return NextResponse.json({ test_mode: true, order_id: orderId });
