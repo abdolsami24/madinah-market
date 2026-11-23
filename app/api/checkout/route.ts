@@ -30,7 +30,7 @@ import {
 import { formatCents } from "@/lib/menu";
 import { getServiceClient, supabaseConfigured, verifyCustomerUser } from "@/lib/supabase/server";
 import { getStripe, siteUrl, stripeTestMode } from "@/lib/stripe";
-import { getPointsBalance, redemptionFor, redeemPointsForOrder } from "@/lib/points";
+import { getPointsStatus, redemptionFor, redeemPointsForOrder } from "@/lib/points";
 import { getSettings, getUnavailableIds, getHoursConfig } from "@/lib/admin";
 import { normalizeFulfillment } from "@/lib/fulfillment";
 import { getPricingMenuById } from "@/lib/menuDb";
@@ -233,10 +233,16 @@ export async function POST(req: Request) {
   let points_redeemed = 0;
   if (body.use_points === true && customerUser) {
     try {
-      const balance = await getPointsBalance(customerUser.id);
-      const redemption = redemptionFor(balance, subtotal);
-      discount_cents = redemption.discount_cents;
-      points_redeemed = redemption.points;
+      const status = await getPointsStatus(customerUser.id);
+      // Unlock rule (2026-11-23): points spend only in a month where
+      // the customer has already spent $100+ on paid orders (this
+      // order doesn't count yet — it isn't paid). Locked points
+      // simply don't apply; the order proceeds without a discount.
+      if (status.unlocked) {
+        const redemption = redemptionFor(status.balance, subtotal);
+        discount_cents = redemption.discount_cents;
+        points_redeemed = redemption.points;
+      }
     } catch (err) {
       console.error("[checkout] points balance check failed:", err);
     }
