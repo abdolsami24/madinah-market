@@ -695,11 +695,13 @@ html { scroll-padding-bottom: 7rem; }
    the top, the middle scrolls on its own, and the action bar is BUILT
    INTO the bottom of the screen, so it can never float over a field. */
 .panel.checkout-sheet {
-  position: fixed;
-  top: 5.5rem;
-  right: 0;
-  bottom: 0;
-  left: 0;
+  /* In-flow sticky, NOT fixed: the sheet sits in the page directly
+     under the header and sticks there — its top is the header's real
+     measured height (set as --sheet-top by Storefront), so it lines
+     up on every phone and desktop with no guessed offset. */
+  position: sticky;
+  top: var(--sheet-top, 5.5rem);
+  height: calc(100dvh - var(--sheet-top, 5.5rem));
   z-index: 40;
   margin: 0;
   padding: 0;
@@ -709,6 +711,12 @@ html { scroll-padding-bottom: 7rem; }
   display: flex;
   justify-content: center;
 }
+/* While a checkout screen is open, the page's top strips come out of
+   the page entirely — on phones the test-mode banner and the promo
+   box bled over the top of the checkout screen. */
+body:has(.checkout-sheet) .testmode-banner,
+body:has(.checkout-sheet) .closed-banner,
+body:has(.checkout-sheet) .promo-box { display: none !important; }
 .sheet-inner {
   width: 100%;
   max-width: 880px;
@@ -769,9 +777,6 @@ button.sheet-bar:disabled { opacity: 0.55; cursor: not-allowed; }
   flex: none;
 }
 .cart-line > span:first-of-type { flex: 1; }
-@media (max-width: 700px) {
-  .panel.checkout-sheet { top: 8.25rem; }
-}
 .panel-head {
   display: flex;
   align-items: center;
