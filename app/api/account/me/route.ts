@@ -5,7 +5,7 @@
 import { NextResponse } from "next/server";
 import { supabaseConfigured, verifyCustomerUser, getServiceClient } from "@/lib/supabase/server";
 import { ensureProfile } from "@/lib/profiles";
-import { getPointsBalance, getPointsHistory } from "@/lib/points";
+import { getPointsStatus, getPointsHistory } from "@/lib/points";
 
 export const dynamic = "force-dynamic";
 
@@ -19,13 +19,24 @@ export async function GET(req: Request) {
   }
   const profile = await ensureProfile(user);
   // Loyalty (best-effort: null until the loyalty schema has been run).
-  let points: { balance: number; history: unknown[] } | null = null;
+  // balance is the spendable (unexpired) balance; the rest is the
+  // $100-a-month unlock state the account / rewards / checkout UIs
+  // render (rules: lib/points.ts).
+  let points: Record<string, unknown> | null = null;
   try {
-    const [balance, history] = await Promise.all([
-      getPointsBalance(user.id),
+    const [status, history] = await Promise.all([
+      getPointsStatus(user.id),
       getPointsHistory(user.id),
     ]);
-    points = { balance, history };
+    points = {
+      balance: status.balance,
+      history,
+      monthSpentCents: status.monthSpentCents,
+      unlockTargetCents: status.unlockTargetCents,
+      unlocked: status.unlocked,
+      remainingToUnlockCents: status.remainingToUnlockCents,
+      nextExpiry: status.nextExpiry,
+    };
   } catch {
     points = null;
   }
