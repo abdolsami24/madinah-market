@@ -13,6 +13,7 @@ import type { Metadata } from "next";
 import { getOrderByDriverToken } from "@/lib/delivery";
 import { formatCents } from "@/lib/menu";
 import DriverDeliveredButton from "@/components/DriverDeliveredButton";
+import DriverLocationShare from "@/components/DriverLocationShare";
 
 export const dynamic = "force-dynamic";
 
@@ -84,6 +85,13 @@ export default async function DriverPage({
       >
         📍 Navigate — Google Maps
       </a>
+
+      {!delivered && (
+        <DriverLocationShare
+          token={token}
+          alreadyOut={order.delivery_status === "out_for_delivery"}
+        />
+      )}
 
       <div
         style={{
