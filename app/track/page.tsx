@@ -48,6 +48,11 @@ interface TrackedOrder {
   shipday_status: string | null;
   delivery_provider?: string | null;
   delivery_status?: string | null;
+  /** Live tracking: DoorDash's live-map URL + house driver GPS. */
+  delivery_tracking_url?: string | null;
+  driver_lat?: number | null;
+  driver_lng?: number | null;
+  driver_loc_at?: string | null;
   created_at: string;
 }
 
@@ -249,6 +254,59 @@ export default function TrackPage() {
                     )}
                   </p>
                 )}
+                {order.fulfillment === "delivery" &&
+                  order.delivery_tracking_url &&
+                  order.delivery_status !== "delivered" &&
+                  !deliveryIsFailed(order.delivery_status) && (
+                    <a
+                      className="checkout-btn"
+                      style={{
+                        display: "block",
+                        textAlign: "center",
+                        marginTop: "0.75rem",
+                        textDecoration: "none",
+                      }}
+                      href={order.delivery_tracking_url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      🗺️ Track your driver live
+                    </a>
+                  )}
+                {order.fulfillment === "delivery" &&
+                  order.delivery_provider === "house" &&
+                  order.driver_lat != null &&
+                  order.driver_lng != null &&
+                  order.delivery_status !== "delivered" && (
+                    <div style={{ marginTop: "0.75rem" }}>
+                      <iframe
+                        key={order.driver_loc_at ?? "loc"}
+                        title="Driver live location"
+                        src={`https://www.openstreetmap.org/export/embed.html?bbox=${(order.driver_lng ?? 0) - 0.012}%2C${(order.driver_lat ?? 0) - 0.012}%2C${(order.driver_lng ?? 0) + 0.012}%2C${(order.driver_lat ?? 0) + 0.012}&layer=mapnik&marker=${order.driver_lat}%2C${order.driver_lng}`}
+                        style={{
+                          width: "100%",
+                          height: 260,
+                          border: "1px solid #ccc",
+                          borderRadius: 12,
+                        }}
+                        loading="lazy"
+                      />
+                      <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
+                        🛵 Your driver&apos;s live location
+                        {order.driver_loc_at
+                          ? ` · updated ${Math.max(0, Math.round((Date.now() - new Date(order.driver_loc_at).getTime()) / 1000))}s ago`
+                          : ""}{" "}
+                        ·{" "}
+                        <a
+                          href={`https://www.google.com/maps?q=${order.driver_lat},${order.driver_lng}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open in Google Maps
+                        </a>
+                      </p>
+                    </div>
+                  )}
                 {order.fulfillment === "curbside" &&
                   (order.payment_status === "paid" ||
                     order.payment_status === "test_paid") &&
