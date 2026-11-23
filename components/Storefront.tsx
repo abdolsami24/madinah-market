@@ -18,6 +18,7 @@ import Link from "next/link";
 import { formatCents, type MenuItem, type SelectedOption } from "@/lib/menu";
 import { getBrowserClient } from "@/lib/supabase/client";
 import {
+  CART_EVENT,
   loadCart,
   saveCart,
   clearCart,
@@ -472,6 +473,18 @@ export default function Storefront({
           ? fee.delivery_charge_cents
           : 0;
   const total = subtotal - discountPreview + serviceFeePreview + tax + deliveryFee + tip;
+
+  // The header bag pill shows "count · subtotal" like the reference
+  // site — TopNav has no menu prices, so the subtotal is shared with
+  // it through localStorage whenever it changes.
+  useEffect(() => {
+    try {
+      localStorage.setItem("mm_cart_subtotal_cents", String(subtotal));
+    } catch {
+      /* private mode — the pill simply shows the count alone */
+    }
+    window.dispatchEvent(new Event(CART_EVENT));
+  }, [subtotal]);
 
   // Add (or merge) a cart line: same dish + same options + same
   // instructions merges; anything different stays a separate line.
@@ -1620,6 +1633,7 @@ export default function Storefront({
         )}
       </main>
 
+      {!showCheckout && (
       <footer className="site-footer">
         Madinah Market · 3126 S Parker Rd, Aurora, CO 80014 ·{" "}
         <a href="tel:+17207630786">720-763-0786</a>
@@ -1630,6 +1644,7 @@ export default function Storefront({
         <br />
         Aurora, Colorado · 100% Halal · Kabob, Turkish, Afghan Persian &amp; Middle Eastern
       </footer>
+      )}
 
       {popupItem && (
         <DishPopup
@@ -1675,8 +1690,7 @@ export default function Storefront({
       )}
       {showCheckout && itemCount > 0 && (
         <>
-          <div className="cart-bar">
-            <span className="total">Total {formatCents(total)}</span>
+          <div className="cart-bar cart-bar--action">
             {checkoutStep === 1 ? (
               <button
                 type="button"

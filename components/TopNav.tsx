@@ -24,10 +24,20 @@ const LINKS = [
 export default function TopNav() {
   const pathname = usePathname();
   const [count, setCount] = useState(0);
+  const [subtotalCents, setSubtotalCents] = useState(0);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    const update = () => setCount(cartItemCount(loadCart()));
+    const update = () => {
+      setCount(cartItemCount(loadCart()));
+      try {
+        setSubtotalCents(
+          Number(localStorage.getItem("mm_cart_subtotal_cents") || 0)
+        );
+      } catch {
+        setSubtotalCents(0);
+      }
+    };
     update();
     window.addEventListener(CART_EVENT, update);
     window.addEventListener("storage", update);
@@ -76,10 +86,14 @@ export default function TopNav() {
               }
             >
               🛒 Cart · {count}
+              {subtotalCents > 0 ? ` · $${(subtotalCents / 100).toFixed(2)}` : ""}
             </button>
           ) : (
             <Link href="/menu" className="bag-btn">
-              🛒 {count > 0 ? `Cart · ${count}` : "Order now"}
+              🛒{" "}
+              {count > 0
+                ? `Cart · ${count}${subtotalCents > 0 ? ` · $${(subtotalCents / 100).toFixed(2)}` : ""}`
+                : "Order now"}
             </Link>
           )}
           <button
