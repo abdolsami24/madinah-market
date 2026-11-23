@@ -135,6 +135,10 @@ export interface PrintJob {
    * the ticket's @@QR@@ marker line. Older apps ignore the field.
    */
   qr?: { size: number; data: string } | null;
+  /** Driver-page URL for Bluetooth printers, whose built-in QR
+   * command needs the text itself (the module map above is for the
+   * LAN raster path). Null unless this is a House Delivery order. */
+  qr_url?: string | null;
 }
 
 /**
@@ -310,6 +314,7 @@ export function composeJobs(
       copies: config.copies,
       ticket: buildTicketText(order, numbers, driverUrl),
       qr: qrMatrix ? { size: qrMatrix.size, data: qrModuleString(qrMatrix) } : null,
+      qr_url: driverUrl,
     });
   }
   return jobs;
