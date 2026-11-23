@@ -1134,11 +1134,11 @@ export default function Storefront({
           </div>
         )}
 
-        {qrSource && (
+        {qrSource && !showCheckout && (
           <div className="qr-note">👋 Order here — no app download needed. Pay online, we’ll handle the rest.</div>
         )}
 
-        {installEvent && (
+        {installEvent && !showCheckout && (
           <div className="install-row">
             <button
               type="button"
@@ -1152,7 +1152,10 @@ export default function Storefront({
           </div>
         )}
 
-        <div className="menu-layout" id="menu-top">
+        <div
+          className={showCheckout ? "menu-layout checkout-open" : "menu-layout"}
+          id="menu-top"
+        >
           <aside className="menu-sidebar">
             <h2 className="sidebar-title">Menu</h2>
             <button
