@@ -240,6 +240,28 @@ export default function Storefront({
     checkoutScrollRef.current?.scrollTo({ top: 0 });
   }, [checkoutStep, showCheckout]);
 
+  // The checkout sheet sticks directly under the header — feed CSS the
+  // header's real measured height (it differs phone vs desktop), so
+  // the sheet lines up exactly on every device.
+  useEffect(() => {
+    const header = document.querySelector<HTMLElement>(".site-header");
+    if (!header) return;
+    const measure = () =>
+      document.documentElement.style.setProperty(
+        "--sheet-top",
+        `${Math.round(header.getBoundingClientRect().height)}px`
+      );
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  // Opening checkout: nudge the page up so the info strip scrolls away
+  // and the header + checkout screen sit flush at the top.
+  useEffect(() => {
+    if (showCheckout) window.scrollBy(0, 240);
+  }, [showCheckout]);
+
   // The header bag button (TopNav) asks us to open the checkout panel —
   // the same thing the bottom bar's "Checkout →" does.
   const openCheckoutRef = useRef<() => void>(() => {});
