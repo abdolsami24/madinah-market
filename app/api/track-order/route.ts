@@ -40,11 +40,22 @@ export async function POST(req: Request) {
   const stage3Cols = `${baseCols}, delivery_provider, delivery_status, delivery_markup_cents`;
   const feeCols = `${stage3Cols}, service_fee_cents, free_delivery`;
   const curbsideCols = `${feeCols}, car_description, customer_here_at`;
+  // Live tracking (2026-11-23): DoorDash live-map URL + the house
+  // driver's latest GPS fix — until live-tracking-schema.sql runs,
+  // this select errors and the chain below falls back a tier.
+  const liveCols = `${curbsideCols}, delivery_tracking_url, driver_lat, driver_lng, driver_loc_at`;
   let { data: order } = await supabase
     .from("orders")
-    .select(curbsideCols)
+    .select(liveCols)
     .eq("id", orderId)
     .maybeSingle();
+  if (!order) {
+    ({ data: order } = await supabase
+      .from("orders")
+      .select(curbsideCols)
+      .eq("id", orderId)
+      .maybeSingle());
+  }
   if (!order) {
     ({ data: order } = await supabase
       .from("orders")
@@ -74,6 +85,10 @@ export async function POST(req: Request) {
     free_delivery?: boolean;
     car_description?: string | null;
     customer_here_at?: string | null;
+    delivery_tracking_url?: string | null;
+    driver_lat?: number | null;
+    driver_lng?: number | null;
+    driver_loc_at?: string | null;
   }) | null;
 
   if (!full || last10(String(full.customer_phone ?? "")) !== last10(phone)) {
@@ -106,6 +121,16 @@ export async function POST(req: Request) {
       // Stage 3: DoorDash delivery state for the tracking timeline.
       delivery_provider: full.delivery_provider ?? null,
       delivery_status: full.delivery_status ?? null,
+      // Live tracking: DoorDash's live-map URL + the house driver's
+      // latest GPS fix (delivery orders only).
+      delivery_tracking_url:
+        full.fulfillment === "delivery" ? (full.delivery_tracking_url ?? null) : null,
+      driver_lat:
+        full.fulfillment === "delivery" ? (full.driver_lat ?? null) : null,
+      driver_lng:
+        full.fulfillment === "delivery" ? (full.driver_lng ?? null) : null,
+      driver_loc_at:
+        full.fulfillment === "delivery" ? (full.driver_loc_at ?? null) : null,
       created_at: full.created_at,
     },
   });
