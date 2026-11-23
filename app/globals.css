@@ -693,7 +693,20 @@ html { scroll-padding-bottom: 7rem; }
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  /* Bars matching 2026-11-22: "Your order" + Back to menu stay pinned
+     under the sticky header while the checkout form scrolls — the
+     reference site's pinned Back + title block. */
+  position: sticky;
+  top: 5.6rem;
+  z-index: 20;
+  background: var(--surface);
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--hairline);
 }
+/* Ali-style checkout bar: one centred button, no total text — the
+   money lives in the panel's breakdown and the header bag pill. */
+.cart-bar--action { justify-content: center; padding: 0.5rem; }
+.cart-bar--action button { flex: 1; text-align: center; }
 .back-link {
   background: none;
   border: none;
