@@ -96,6 +96,13 @@ interface SiteState {
     delivery_provider?: string;
     /** Flat delivery fee in cents when the provider is Shipday. */
     shipday_delivery_fee_cents?: number;
+    /**
+     * House Delivery update: the three provider switches. Absent in
+     * older payloads — then the legacy delivery_provider decides.
+     */
+    delivery_doordash_enabled?: boolean;
+    delivery_shipday_enabled?: boolean;
+    delivery_house_enabled?: boolean;
   };
   unavailable: string[];
   promotions: { id: number; title: string; body: string; item_id: string | null }[];
@@ -490,12 +497,24 @@ export default function Storefront({
     subtotal,
     fees?.service_fee ?? DEFAULT_SERVICE_FEE
   );
-  // Delivery provider switch: in Shipday mode there is NO quote —
-  // the customer pays the flat Shipday fee from the public settings
-  // (zeroed by the Free Delivery promotion), and checkout never waits
-  // on a quote. DoorDash mode keeps the quoted charge exactly as
-  // before.
-  const shipdayMode = siteState?.settings.delivery_provider === "shipday";
+  // Delivery providers: the flat-fee NO-quote path applies ONLY
+  // when Shipday is the single enabled provider. Whenever House
+  // Delivery or DoorDash is also ON, the quote endpoint resolves
+  // the provider (House → DoorDash → Shipday, with radius
+  // fall-through) and stores the fee — checkout then verifies the
+  // stored quote, exactly like the DoorDash flow. Older payloads
+  // (no switch fields) fall back to the legacy single provider.
+  const dlSettings = siteState?.settings;
+  const enablesKnown =
+    !!dlSettings &&
+    (dlSettings.delivery_house_enabled !== undefined ||
+      dlSettings.delivery_doordash_enabled !== undefined ||
+      dlSettings.delivery_shipday_enabled !== undefined);
+  const shipdayMode = enablesKnown
+    ? dlSettings.delivery_shipday_enabled === true &&
+      dlSettings.delivery_house_enabled !== true &&
+      dlSettings.delivery_doordash_enabled !== true
+    : dlSettings?.delivery_provider === "shipday";
   const shipdayFeeCents = Math.max(
     0,
     Math.round(siteState?.settings.shipday_delivery_fee_cents ?? 699)
@@ -729,12 +748,15 @@ export default function Storefront({
             message: String(data.message ?? "We could not get a delivery quote right now."),
           });
         } else {
-          const eta = data.estimated_dropoff_at
-            ? `Arrives about ${new Date(data.estimated_dropoff_at).toLocaleTimeString([], {
-                hour: "numeric",
-                minute: "2-digit",
-              })}`
-            : "";
+          const eta =
+            data.provider === "house"
+              ? "🏠 Delivered by our own driver"
+              : data.estimated_dropoff_at
+                ? `Arrives about ${new Date(data.estimated_dropoff_at).toLocaleTimeString([], {
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}`
+                : "";
           setFee({
             kind: "ok",
             quote_id: String(data.quote_id),

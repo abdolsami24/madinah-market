@@ -26,6 +26,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { formatCents } from "@/lib/menu";
 import { formatDenverTime } from "@/lib/hours";
+import QrCode from "@/components/QrCode";
 import type { Session } from "@supabase/supabase-js";
 
 interface KitchenOrder {
@@ -60,6 +61,10 @@ interface KitchenOrder {
   kitchen_status: string;
   shipday_order_id: string | null;
   shipday_status: string | null;
+  /** House Delivery (absent until the columns exist on the row). */
+  delivery_provider?: string | null;
+  driver_token?: string | null;
+  delivery_status?: string | null;
   created_at: string;
 }
 
@@ -383,7 +388,9 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
                       }`}
                     >
                       {o.fulfillment === "delivery"
-                        ? "🛵 DELIVERY"
+                        ? o.delivery_provider === "house"
+                          ? "🏠 HOUSE DELIVERY"
+                          : "🛵 DELIVERY"
                         : o.fulfillment === "curbside"
                           ? "🚗 CURBSIDE"
                           : "🏃 PICKUP"}
@@ -436,7 +443,25 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
                   )}
                   <div className="k-hint">👆 Tap here when the food is ready</div>
                 </div>
-                {o.fulfillment === "delivery" && (
+                {o.fulfillment === "delivery" && o.delivery_provider === "house" && (
+                  <div style={{ marginTop: "0.3rem" }}>
+                    📍 {o.delivery_address ?? ""}
+                    <div style={{ marginTop: "0.4rem" }}>
+                      🏠 <strong>House delivery</strong> — driver scans the QR on
+                      the printed ticket
+                      {o.delivery_status === "delivered" ? " · ✓ DELIVERED" : ""}
+                    </div>
+                    {o.driver_token && (
+                      <div style={{ marginTop: "0.4rem" }}>
+                        <QrCode
+                          text={`${typeof window !== "undefined" ? window.location.origin : ""}/d/${o.driver_token}`}
+                          size={110}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+                {o.fulfillment === "delivery" && o.delivery_provider !== "house" && (
                   <div style={{ marginTop: "0.3rem" }}>
                     📍 {o.delivery_address ?? ""}
                     <br />

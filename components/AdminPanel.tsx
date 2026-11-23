@@ -17,6 +17,7 @@ import { formatCents, type MenuItem } from "@/lib/menu";
 import { minutesToInputValue, type HoursConfig } from "@/lib/hours";
 import { deliveryStatusLabel } from "@/lib/deliveryStatus";
 import { adminStatusLabel } from "@/lib/kitchenStatus";
+import QrCode from "@/components/QrCode";
 
 // Reserved dish_photos ids for the homepage hero (mirror lib/admin.ts —
 // this client component cannot import the server-only module). They are
@@ -71,6 +72,11 @@ interface AdminState {
     /** Provider switch — absent in older payloads = DoorDash. */
     provider?: string;
     shipday_fee_cents?: number;
+    /** House Delivery update — absent in older payloads (derived). */
+    doordash_enabled?: boolean;
+    shipday_enabled?: boolean;
+    house_enabled?: boolean;
+    house_tiers?: { miles: number; fee_cents: number }[];
   };
   fees?: {
     service_fee: {
@@ -138,6 +144,8 @@ interface PanelOrder {
   customer_here_at?: string | null;
   // Order note — absent until supabase/order-note-schema.sql runs.
   note?: string | null;
+  // House Delivery — absent until supabase/house-delivery-schema.sql runs.
+  driver_token?: string | null;
   delivery_quote?: {
     provider_mode: string;
     fee_cents: number;
@@ -361,14 +369,22 @@ export default function AdminPanel() {
   const [hDeliverySunOpen, setHDeliverySunOpen] = useState("");
   const [hDeliverySunClose, setHDeliverySunClose] = useState("");
 
-  // Delivery settings form (Stage 3 — DoorDash; provider switch adds
-  // the active-provider choice + the Shipday flat fee).
+  // Delivery settings form (Stage 3 — DoorDash; provider switch;
+  // House Delivery update: three independent ON/OFF switches +
+  // the House radius tiers editor).
   const [dlMaxMiles, setDlMaxMiles] = useState("8");
   const [dlMinSubtotal, setDlMinSubtotal] = useState("0");
   const [dlMarkupFlat, setDlMarkupFlat] = useState("0");
   const [dlMarkupPercent, setDlMarkupPercent] = useState("0");
-  const [dlProvider, setDlProvider] = useState<"doordash" | "shipday">("doordash");
   const [dlShipdayFee, setDlShipdayFee] = useState("6.99");
+  const [dlDoordashOn, setDlDoordashOn] = useState(true);
+  const [dlShipdayOn, setDlShipdayOn] = useState(false);
+  const [dlHouseOn, setDlHouseOn] = useState(false);
+  const [dlTiers, setDlTiers] = useState<{ miles: string; fee: string }[]>([
+    { miles: "1", fee: "3.99" },
+    { miles: "2", fee: "5.99" },
+    { miles: "3", fee: "7.99" },
+  ]);
 
   useEffect(() => {
     if (!state?.delivery) return;
@@ -376,8 +392,21 @@ export default function AdminPanel() {
     setDlMinSubtotal(String(state.delivery.min_subtotal_cents / 100));
     setDlMarkupFlat(String(state.delivery.markup_flat_cents / 100));
     setDlMarkupPercent(String(state.delivery.markup_percent));
-    setDlProvider(state.delivery.provider === "shipday" ? "shipday" : "doordash");
     setDlShipdayFee(String((state.delivery.shipday_fee_cents ?? 699) / 100));
+    // Switches: prefer the explicit fields; older payloads derive
+    // them from the legacy single provider exactly like the server.
+    const legacyShipday = state.delivery.provider === "shipday";
+    setDlDoordashOn(state.delivery.doordash_enabled ?? !legacyShipday);
+    setDlShipdayOn(state.delivery.shipday_enabled ?? legacyShipday);
+    setDlHouseOn(state.delivery.house_enabled ?? false);
+    if (state.delivery.house_tiers && state.delivery.house_tiers.length > 0) {
+      setDlTiers(
+        state.delivery.house_tiers.map((t) => ({
+          miles: String(t.miles),
+          fee: String(t.fee_cents / 100),
+        }))
+      );
+    }
   }, [state]);
 
   // Service Fee + Free Delivery forms.
@@ -956,7 +985,9 @@ export default function AdminPanel() {
                       Delivery —{" "}
                       {selectedOrder.delivery_provider === "shipday"
                         ? "Shipday"
-                        : "DoorDash Drive"}{" "}
+                        : selectedOrder.delivery_provider === "house"
+                          ? "House Delivery (our driver)"
+                          : "DoorDash Drive"}{" "}
                       {selectedOrder.delivery_provider !== "shipday" &&
                         selectedOrder.delivery_quote?.provider_mode === "mock" && (
                           <span className="ops-chip">MOCK — simulated, not real DoorDash</span>
@@ -966,14 +997,49 @@ export default function AdminPanel() {
                           <span className="ops-chip">LIVE</span>
                         )}
                     </h3>
+                    {selectedOrder.delivery_provider === "house" &&
+                      selectedOrder.driver_token && (
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: "1rem",
+                            alignItems: "center",
+                            margin: "0.5rem 0",
+                          }}
+                        >
+                          <QrCode
+                            text={`${typeof window !== "undefined" ? window.location.origin : ""}/d/${selectedOrder.driver_token}`}
+                            size={110}
+                          />
+                          <div>
+                            <div>
+                              <strong>Driver page:</strong>{" "}
+                              <a
+                                href={`/d/${selectedOrder.driver_token}`}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                open the driver page
+                              </a>
+                            </div>
+                            <p className="ops-muted">
+                              This QR is printed on the ticket. The driver scans
+                              it for Google Maps directions and the customer
+                              details — no typing.
+                            </p>
+                          </div>
+                        </div>
+                      )}
                     <div className="ops-detail-grid">
                       <span>Provider</span>
                       <strong>
                         {selectedOrder.delivery_provider === "shipday"
                           ? "Shipday"
-                          : selectedOrder.delivery_provider === "doordash"
-                            ? "DoorDash Drive"
-                            : "Not dispatched yet"}
+                          : selectedOrder.delivery_provider === "house"
+                            ? "House Delivery"
+                            : selectedOrder.delivery_provider === "doordash"
+                              ? "DoorDash Drive"
+                              : "Not dispatched yet"}
                         {selectedOrder.delivery_provider !== "shipday" &&
                         selectedOrder.delivery_quote
                           ? ` (${selectedOrder.delivery_quote.provider_mode})`
@@ -1003,7 +1069,9 @@ export default function AdminPanel() {
                       <span>
                         {selectedOrder.delivery_provider === "shipday"
                           ? "Delivery fee (flat)"
-                          : "DoorDash fee"}
+                          : selectedOrder.delivery_provider === "house"
+                            ? "House fee (distance tier)"
+                            : "DoorDash fee"}
                       </span>
                       <strong>
                         {formatCents(
@@ -1924,22 +1992,127 @@ export default function AdminPanel() {
         </section>
         <section className="ops-card">
           <h3>Delivery</h3>
-          <div className="ops-field">
-            <label htmlFor="dl-provider">Delivery provider (for NEW paid orders)</label>
-            <select
-              id="dl-provider"
-              value={dlProvider}
-              onChange={(e) =>
-                setDlProvider(e.target.value === "shipday" ? "shipday" : "doordash")
-              }
+          <p className="ops-muted">
+            Turn each delivery service ON or OFF. When more than one is ON, an
+            order uses the first that can serve the address:{" "}
+            <strong>House Delivery → DoorDash Drive → Shipday</strong>. If all
+            three are OFF, delivery disappears from checkout (pickup and
+            curbside stay). Applies to NEW orders only.
+          </p>
+          <div className="cart-line">
+            <span>
+              🏠 <strong>House Delivery</strong> (our own driver):{" "}
+              <strong>{dlHouseOn ? "ON" : "OFF"}</strong>
+            </span>
+            <button
+              type="button"
+              className="ops-btn"
+              disabled={busy}
+              onClick={() => setDlHouseOn((v) => !v)}
             >
-              <option value="doordash">DoorDash Drive</option>
-              <option value="shipday">Shipday</option>
-            </select>
+              Turn {dlHouseOn ? "OFF" : "ON"}
+            </button>
           </div>
+          <div className="cart-line">
+            <span>
+              <strong>DoorDash Drive</strong>:{" "}
+              <strong>{dlDoordashOn ? "ON" : "OFF"}</strong>
+            </span>
+            <button
+              type="button"
+              className="ops-btn"
+              disabled={busy}
+              onClick={() => setDlDoordashOn((v) => !v)}
+            >
+              Turn {dlDoordashOn ? "OFF" : "ON"}
+            </button>
+          </div>
+          <div className="cart-line">
+            <span>
+              <strong>Shipday</strong>: <strong>{dlShipdayOn ? "ON" : "OFF"}</strong>
+            </span>
+            <button
+              type="button"
+              className="ops-btn"
+              disabled={busy}
+              onClick={() => setDlShipdayOn((v) => !v)}
+            >
+              Turn {dlShipdayOn ? "OFF" : "ON"}
+            </button>
+          </div>
+          {dlHouseOn && (
+            <div className="ops-field">
+              <label>House Delivery prices — by distance (straight line from the restaurant)</label>
+              {dlTiers.map((tier, i) => (
+                <div
+                  key={i}
+                  style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.4rem" }}
+                >
+                  <span>Up to</span>
+                  <input
+                    type="number"
+                    min="0.5"
+                    step="0.5"
+                    value={tier.miles}
+                    aria-label="Tier miles"
+                    onChange={(e) =>
+                      setDlTiers((rows) =>
+                        rows.map((r, j) => (j === i ? { ...r, miles: e.target.value } : r))
+                      )
+                    }
+                    style={{ width: "5.5rem" }}
+                  />
+                  <span>miles → $</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.25"
+                    value={tier.fee}
+                    aria-label="Tier fee in dollars"
+                    onChange={(e) =>
+                      setDlTiers((rows) =>
+                        rows.map((r, j) => (j === i ? { ...r, fee: e.target.value } : r))
+                      )
+                    }
+                    style={{ width: "6.5rem" }}
+                  />
+                  <button
+                    type="button"
+                    className="ops-btn"
+                    disabled={busy || dlTiers.length <= 1}
+                    onClick={() => setDlTiers((rows) => rows.filter((_, j) => j !== i))}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                className="ops-btn"
+                disabled={busy}
+                onClick={() =>
+                  setDlTiers((rows) => [
+                    ...rows,
+                    {
+                      miles: String((Number(rows[rows.length - 1]?.miles) || 0) + 1),
+                      fee: rows[rows.length - 1]?.fee ?? "5.99",
+                    },
+                  ])
+                }
+              >
+                + Add a distance row
+              </button>
+              <p className="ops-muted">
+                Beyond the largest distance, House Delivery is not offered —
+                the order falls through to DoorDash or Shipday if they are ON.
+                House orders print a driver QR code on the ticket (directions +
+                customer details). DoorDash and Shipday tickets never have a QR.
+              </p>
+            </div>
+          )}
           <div className="ops-field">
             <label htmlFor="dl-shipday-fee">
-              Shipday delivery fee ($, flat — charged to the customer in Shipday mode)
+              Shipday delivery fee ($, flat — charged to the customer for Shipday deliveries)
             </label>
             <input
               id="dl-shipday-fee"
@@ -2008,11 +2181,19 @@ export default function AdminPanel() {
                   min_subtotal_cents: Math.max(0, Math.round(Number(dlMinSubtotal) * 100) || 0),
                   markup_flat_cents: Math.max(0, Math.round(Number(dlMarkupFlat) * 100) || 0),
                   markup_percent: Math.min(100, Math.max(0, Number(dlMarkupPercent) || 0)),
-                  provider: dlProvider,
                   shipday_delivery_fee_cents: Math.max(
                     0,
                     Math.round(Number(dlShipdayFee) * 100) || 0
                   ),
+                  doordash_enabled: dlDoordashOn,
+                  shipday_enabled: dlShipdayOn,
+                  house_enabled: dlHouseOn,
+                  house_tiers: dlTiers
+                    .map((t) => ({
+                      miles: Number(t.miles),
+                      fee_cents: Math.max(0, Math.round(Number(t.fee) * 100) || 0),
+                    }))
+                    .filter((t) => Number.isFinite(t.miles) && t.miles > 0),
                 },
                 "Delivery settings saved — new orders now use them."
               )
@@ -2021,14 +2202,16 @@ export default function AdminPanel() {
             Save delivery settings
           </button>
           <p className="ops-muted">
-            DoorDash mode: the customer sees ONE “Delivery fee” line — the
-            DoorDash fee plus the extra fee combined; the split stays visible in
-            each order's details here in the panel. Shipday mode: no quote — the
-            customer pays the flat Shipday fee above (the Free Delivery promotion
-            can still make it $0), and Shipday bills the restaurant per delivery
-            on its own account. Test orders are never sent to Shipday for real.
-            The switch applies to new orders only; orders already placed keep
-            the provider and fee they were charged with.
+            DoorDash: the customer sees ONE “Delivery fee” line — the DoorDash
+            fee plus the extra fee combined; the split stays visible in each
+            order's details here in the panel. Shipday: the customer pays the
+            flat Shipday fee above (the Free Delivery promotion can still make
+            it $0), and Shipday bills the restaurant per delivery on its own
+            account. House Delivery: the customer pays the tier price for the
+            address distance, and your own driver delivers — the ticket prints
+            a QR code with the directions and customer details. Test orders are
+            never sent to Shipday for real. Orders already placed keep the
+            provider and fee they were charged with.
           </p>
         </section>
         <section className="ops-card">
