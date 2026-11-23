@@ -17,6 +17,7 @@ export function deliveryStatusLabel(raw: string | null | undefined): string {
     case "picked_up":
       return "Picked up — on the way";
     case "enroute_to_dropoff":
+    case "out_for_delivery":
       return "On the way to you";
     case "arrived_at_dropoff":
       return "Driver has arrived";
@@ -42,6 +43,7 @@ export function deliveryStepIndex(raw: string | null | undefined): number | null
       return 3;
     case "picked_up":
     case "enroute_to_dropoff":
+    case "out_for_delivery":
     case "arrived_at_dropoff":
       return 2;
     default:

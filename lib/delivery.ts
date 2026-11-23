@@ -31,7 +31,7 @@ import {
   type AnyDeliveryProvider,
   type HouseTier,
 } from "./deliveryPricing";
-import { smsDeliveryDelivered } from "./sms";
+import { smsDeliveryDelivered, smsDeliveryOnItsWay } from "./sms";
 
 // ---- Settings (site_settings, same pattern as the hours editor) -------------
 
@@ -567,6 +567,12 @@ export async function dispatchDeliveryForOrder(
       delivery_error: null,
       delivery_status_at: new Date().toISOString(),
     });
+    // The live-map link rides in its own fail-soft update: until
+    // supabase/live-tracking-schema.sql runs, that column does not
+    // exist, and a missing column must never fail the dispatch save.
+    if (result.tracking_url) {
+      await saveDeliveryTrackingUrl(order.id, result.tracking_url);
+    }
     return { ok: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Delivery dispatch failed";
@@ -603,6 +609,78 @@ export async function applyDeliveryStatus(
     } catch (err) {
       console.error("[delivery] delivered SMS failed:", err);
     }
+  }
+  // "On its way" SMS — exactly once, on the heads-out transition
+  // (the driver picked the food up / started toward the customer),
+  // with the live tracking link: DoorDash's own map when we have
+  // its URL, otherwise our track page (which shows the house
+  // driver's live position). Statuses past heads-out don't refire.
+  const WAY = ["picked_up", "enroute_to_dropoff", "out_for_delivery"];
+  const WAY_OR_DONE = [...WAY, "arrived_at_dropoff", "delivered"];
+  if (WAY.includes(status) && !WAY_OR_DONE.includes(previous)) {
+    try {
+      let link: string | null = null;
+      try {
+        const supabase = getServiceClient();
+        const { data } = await supabase
+          .from("orders")
+          .select("delivery_provider, delivery_tracking_url")
+          .eq("id", order.id)
+          .maybeSingle();
+        const row = data as {
+          delivery_provider?: string | null;
+          delivery_tracking_url?: string | null;
+        } | null;
+        if (row?.delivery_provider === "doordash" && row?.delivery_tracking_url) {
+          link = row.delivery_tracking_url;
+        }
+      } catch {
+        /* no stored link — the SMS falls back to the track page */
+      }
+      await smsDeliveryOnItsWay(order, link);
+    } catch (err) {
+      console.error("[delivery] on-its-way SMS failed:", err);
+    }
+  }
+}
+
+/**
+ * Stores DoorDash's live-map URL on the order (live tracking,
+ * 2026-11-23). Deliberately its own tiny update: until
+ * supabase/live-tracking-schema.sql runs the column does not exist,
+ * and that must never disturb the main delivery updates. Silent on
+ * failure — tracking is a bonus, never a blocker.
+ */
+export async function saveDeliveryTrackingUrl(
+  orderId: number,
+  url: string | null | undefined
+): Promise<void> {
+  if (!url || !url.startsWith("http")) return;
+  try {
+    const supabase = getServiceClient();
+    await supabase
+      .from("orders")
+      .update({ delivery_tracking_url: url })
+      .eq("id", orderId);
+  } catch {
+    /* column missing or transient — ignore */
+  }
+}
+
+/** saveDeliveryTrackingUrl for callers that only know the DoorDash id. */
+export async function saveTrackingUrlByExternalId(
+  externalId: string,
+  url: string | null | undefined
+): Promise<void> {
+  if (!externalId || !url || !url.startsWith("http")) return;
+  try {
+    const supabase = getServiceClient();
+    await supabase
+      .from("orders")
+      .update({ delivery_tracking_url: url })
+      .eq("delivery_external_id", externalId);
+  } catch {
+    /* ignore */
   }
 }
 
@@ -704,6 +782,9 @@ export async function refreshDeliveryStatus(
       const current = await getDoorDashDelivery(order.delivery_external_id);
       if (!current) return { ok: false, status: null, error: "DoorDash returned no status." };
       await applyDeliveryStatus(order, current.delivery_status);
+      if (current.tracking_url) {
+        await saveDeliveryTrackingUrl(order.id, current.tracking_url);
+      }
       return { ok: true, status: current.delivery_status };
     } catch (err) {
       return {
@@ -827,4 +908,60 @@ export async function markHouseDelivered(token: string): Promise<boolean> {
     console.error("[delivery] house kitchen auto-complete failed:", err);
   }
   return true;
+}
+
+/**
+ * House Delivery live tracking: the driver page posts the phone's
+ * GPS here (via /api/driver-location) while the delivery runs. The
+ * first accepted post flips the order to 'out_for_delivery' through
+ * the shared status path — the customer's timeline advances and the
+ * exactly-once on-its-way SMS fires with the track-page link (the
+ * track page and the admin panel draw the live map from these
+ * columns). Posts for a delivered order are acknowledged but
+ * ignored, so the driver app can stop itself. Fail-soft: until
+ * supabase/live-tracking-schema.sql runs, the update errors and
+ * this returns { ok: false } without touching the status.
+ */
+export async function updateDriverLocation(
+  token: string,
+  lat: number,
+  lng: number
+): Promise<{ ok: boolean; status?: string }> {
+  const order = await getOrderByDriverToken(token);
+  if (!order) return { ok: false };
+  if (order.delivery_status === "delivered") {
+    return { ok: true, status: "delivered" };
+  }
+  try {
+    const supabase = getServiceClient();
+    const { error } = await supabase
+      .from("orders")
+      .update({
+        driver_lat: lat,
+        driver_lng: lng,
+        driver_loc_at: new Date().toISOString(),
+      })
+      .eq("id", order.id);
+    if (error) {
+      console.warn("[delivery] driver location save failed:", error.message);
+      return { ok: false };
+    }
+  } catch (err) {
+    console.error("[delivery] driver location save failed:", err);
+    return { ok: false };
+  }
+  let status = order.delivery_status ?? "pending";
+  if (status !== "out_for_delivery") {
+    await applyDeliveryStatus(
+      {
+        id: order.id,
+        customer_phone: order.customer_phone,
+        fulfillment: order.fulfillment,
+        delivery_status: order.delivery_status,
+      },
+      "out_for_delivery"
+    );
+    status = "out_for_delivery";
+  }
+  return { ok: true, status };
 }

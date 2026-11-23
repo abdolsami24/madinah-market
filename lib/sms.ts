@@ -98,6 +98,24 @@ export async function smsPickupReady(order: SmsOrder): Promise<void> {
   );
 }
 
+/**
+ * (d) Delivery is on its way — sent exactly once, on the heads-out
+ * transition in applyDeliveryStatus. The link is the provider's live
+ * map when we have one (DoorDash), otherwise our own track page
+ * (House Delivery shows the driver's live position there).
+ */
+export async function smsDeliveryOnItsWay(
+  order: SmsOrder,
+  link: string | null
+): Promise<void> {
+  if (!order.customer_phone) return;
+  const url = link && link.startsWith("http") ? link : trackUrl(order.id);
+  await sendSms(
+    order.customer_phone,
+    `Madinah Market: Good news — your order #${order.id} is on its way! Track it live here: ${url}`
+  );
+}
+
 /** (c) Delivery order delivered (webhook / status refresh). */
 export async function smsDeliveryDelivered(order: SmsOrder): Promise<void> {
   if (!order.customer_phone) return;
