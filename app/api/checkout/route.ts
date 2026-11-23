@@ -114,72 +114,105 @@ export async function POST(req: Request) {
   const feeSettings = await getFeeSettings();
   const service_fee_cents = computeServiceFeeCents(subtotal, feeSettings.service_fee);
 
-  // Delivery fee: what is required depends on the ACTIVE provider
-  // (Admin → Operations → Delivery; default DoorDash Drive).
-  // DoorDash mode: the fee comes ONLY from a stored DoorDash quote —
-  // the browser never sets it. The quote must be unexpired and for
-  // this exact address. The restaurant's extra markup is computed from
-  // the current admin settings at this moment.
-  // Shipday mode (provider switch): NO quote exists — the customer
-  // pays the flat Shipday fee from the delivery settings; no radius
-  // cap and no delivery minimum apply (Shipday decides coverage).
+  // Delivery fee: NEVER from the browser. The provider for THIS
+  // order is resolved at quote time (House → DoorDash → Shipday
+  // among the enabled switches, with radius fall-through) and the
+  // verified stored quote fixes both the provider and the fee; the
+  // provider is saved on the order so dispatch after payment uses
+  // exactly what the customer was charged for.
+  // Legacy fallback: when Shipday is the ONLY enabled provider the
+  // storefront never quotes (flat fee) — that path is unchanged.
   let delivery_fee_cents = 0;
   let delivery_markup_cents = 0;
   let delivery_quote_row_id: string | null = null;
+  let delivery_provider: "house" | "shipday" | "doordash" | null = null;
   let free_delivery = false;
   if (fulfillment === "delivery") {
     if (delivery_address.length < 6) return bad("Please enter the delivery address");
     const deliverySettings = await getDeliverySettings();
-    if (deliverySettings.provider === "shipday") {
-      delivery_fee_cents = deliverySettings.shipday_fee_cents;
-      delivery_markup_cents = 0;
-      // The Free Delivery promotion zeroes the flat fee exactly like
-      // the DoorDash charge; service fee / tax / tip are unchanged.
-      free_delivery = freeDeliveryApplies(subtotal, feeSettings.free_delivery);
-    } else {
     const quoteId = String(body.delivery_quote_id ?? "").trim();
     if (!quoteId) {
-      return bad("Please wait for the delivery fee quote, then place your order again.");
-    }
-    const check = await verifyQuoteForCheckout(quoteId, delivery_address);
-    if (!check.ok) {
-      if (check.reason === "expired") {
-        // The storefront re-quotes and shows the new total; the
-        // customer must confirm it before paying — never charge a
-        // silently changed fee.
-        return NextResponse.json(
-          {
-            error:
-              "Your delivery quote expired, so we refreshed the fee. Please review the total and place the order again.",
-            code: "quote_expired",
-          },
-          { status: 409 }
-        );
+      if (
+        deliverySettings.shipday_enabled &&
+        !deliverySettings.house_enabled &&
+        !deliverySettings.doordash_enabled
+      ) {
+        // Shipday-only (the pre-House provider-switch behavior): no
+        // quote exists — the customer pays the flat Shipday fee; no
+        // radius cap and no delivery minimum apply.
+        delivery_provider = "shipday";
+        delivery_fee_cents = deliverySettings.shipday_fee_cents;
+        delivery_markup_cents = 0;
+        free_delivery = freeDeliveryApplies(subtotal, feeSettings.free_delivery);
+      } else {
+        return bad("Please wait for the delivery fee quote, then place your order again.");
       }
-      if (check.reason === "address_mismatch") {
-        return bad("The delivery address changed — please wait for a new delivery quote.");
+    } else {
+      const check = await verifyQuoteForCheckout(quoteId, delivery_address);
+      if (!check.ok) {
+        if (check.reason === "expired") {
+          // The storefront re-quotes and shows the new total; the
+          // customer must confirm it before paying — never charge a
+          // silently changed fee.
+          return NextResponse.json(
+            {
+              error:
+                "Your delivery quote expired, so we refreshed the fee. Please review the total and place the order again.",
+              code: "quote_expired",
+            },
+            { status: 409 }
+          );
+        }
+        if (check.reason === "address_mismatch") {
+          return bad("The delivery address changed — please wait for a new delivery quote.");
+        }
+        return bad("That delivery quote is no longer valid. Please re-enter the address to get a new quote.");
       }
-      return bad("That delivery quote is no longer valid. Please re-enter the address to get a new quote.");
-    }
-    delivery_fee_cents = check.quote.fee_cents;
-    delivery_quote_row_id = check.quote.id;
-    if (
-      deliverySettings.min_subtotal_cents > 0 &&
-      subtotal < deliverySettings.min_subtotal_cents
-    ) {
-      return bad(
-        `Delivery orders need a food subtotal of at least ${formatCents(
-          deliverySettings.min_subtotal_cents
-        )}. Please add a little more, or choose pickup.`
-      );
-    }
-    delivery_markup_cents = markupFor(delivery_fee_cents, deliverySettings);
-    // Free Delivery promotion: decided from the STORED quote + the
-    // server-computed food subtotal — the browser's numbers play no
-    // part. The quote/fee/markup are still stored on the order (the
-    // courier is dispatched exactly as before); the customer is
-    // simply charged $0 for delivery and the restaurant absorbs it.
-    free_delivery = freeDeliveryApplies(subtotal, feeSettings.free_delivery);
+      delivery_quote_row_id = check.quote.id;
+      delivery_fee_cents = check.quote.fee_cents;
+      const mode = check.quote.provider_mode;
+      if (mode === "house" || mode === "shipday") {
+        // Locally priced providers: the stored quote fee IS the
+        // customer fee (tier price / flat fee); no markup. The
+        // delivery minimum applies to House exactly as it did to
+        // DoorDash; Shipday never had one. Free Delivery zeroes
+        // either fee the same way.
+        delivery_provider = mode;
+        delivery_markup_cents = 0;
+        if (
+          mode === "house" &&
+          deliverySettings.min_subtotal_cents > 0 &&
+          subtotal < deliverySettings.min_subtotal_cents
+        ) {
+          return bad(
+            `Delivery orders need a food subtotal of at least ${formatCents(
+              deliverySettings.min_subtotal_cents
+            )}. Please add a little more, or choose pickup.`
+          );
+        }
+        free_delivery = freeDeliveryApplies(subtotal, feeSettings.free_delivery);
+      } else {
+        // 'live' / 'mock' — DoorDash Drive: fee from the stored
+        // quote only, the restaurant's markup computed from the
+        // current admin settings at this moment, delivery minimum
+        // enforced, Free Delivery decided from the stored quote +
+        // the server-computed subtotal. The quote/fee/markup are
+        // stored on the order; the customer pays $0 delivery when
+        // the promotion applies and the restaurant absorbs it.
+        delivery_provider = "doordash";
+        if (
+          deliverySettings.min_subtotal_cents > 0 &&
+          subtotal < deliverySettings.min_subtotal_cents
+        ) {
+          return bad(
+            `Delivery orders need a food subtotal of at least ${formatCents(
+              deliverySettings.min_subtotal_cents
+            )}. Please add a little more, or choose pickup.`
+          );
+        }
+        delivery_markup_cents = markupFor(delivery_fee_cents, deliverySettings);
+        free_delivery = freeDeliveryApplies(subtotal, feeSettings.free_delivery);
+      }
     }
   }
   const tip_cents = computeTipCents(
@@ -251,6 +284,9 @@ export async function POST(req: Request) {
       ...baseRow,
       delivery_quote_id: delivery_quote_row_id,
       delivery_markup_cents,
+      // The provider fixed by the verified quote (House update) —
+      // dispatch after payment follows THIS, not the live switches.
+      delivery_provider,
       service_fee_cents: totals.service_fee_cents,
       free_delivery,
       // Curbside car text (null for pickup/delivery). Dropped by the
@@ -273,6 +309,7 @@ export async function POST(req: Request) {
         ...baseRow,
         delivery_quote_id: delivery_quote_row_id,
         delivery_markup_cents,
+        delivery_provider,
         service_fee_cents: totals.service_fee_cents,
         free_delivery,
         car_description: fulfillment === "curbside" ? car_description : null,
@@ -291,6 +328,7 @@ export async function POST(req: Request) {
         ...baseRow,
         delivery_quote_id: delivery_quote_row_id,
         delivery_markup_cents,
+        delivery_provider,
       })
       .select("id")
       .single());

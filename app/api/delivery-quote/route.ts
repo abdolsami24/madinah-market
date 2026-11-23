@@ -70,6 +70,17 @@ export async function POST(req: Request) {
   );
   return NextResponse.json({
     quote_id: quote.id,
+    // House Delivery update: WHICH provider the resolution picked
+    // ('house' | 'shipday' | 'doordash') and the stored quote's raw
+    // mode — the storefront only needs the fee either way, but the
+    // label helps the customer ("our driver" vs a courier).
+    provider:
+      outcome.provider_mode === "house"
+        ? "house"
+        : outcome.provider_mode === "shipday"
+          ? "shipday"
+          : "doordash",
+    provider_mode: outcome.provider_mode,
     fee_cents: quote.fee_cents,
     fee: formatCents(quote.fee_cents),
     service_fee_cents: markup_cents,
@@ -79,7 +90,6 @@ export async function POST(req: Request) {
     delivery_charge: formatCents(delivery_charge_cents),
     free_delivery,
     expires_at: quote.expires_at,
-    provider_mode: quote.provider_mode,
     estimated_dropoff_at: outcome.estimated_dropoff_at,
     miles: quote.miles,
   });

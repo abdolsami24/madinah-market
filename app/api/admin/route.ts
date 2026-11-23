@@ -37,6 +37,7 @@ import { getMenuItem } from "@/lib/menu";
 import { getDbMenu } from "@/lib/menuDb";
 import { logAudit } from "@/lib/audit";
 import { getDeliverySettings, setDeliverySettings } from "@/lib/delivery";
+import { parseHouseTiers } from "@/lib/deliveryPricing";
 import {
   getFeeSettings,
   setFreeDeliverySettings,
@@ -96,6 +97,11 @@ async function staffState() {
       markup_percent: delivery.markup_percent,
       provider: delivery.provider,
       shipday_fee_cents: delivery.shipday_fee_cents,
+      // House Delivery update: the three switches + radius tiers.
+      doordash_enabled: delivery.doordash_enabled,
+      shipday_enabled: delivery.shipday_enabled,
+      house_enabled: delivery.house_enabled,
+      house_tiers: delivery.house_tiers,
     },
     // Service Fee + Free Delivery settings (staff view only, same
     // reasoning as the delivery settings above).
@@ -135,6 +141,12 @@ export async function GET(req: Request) {
       ...settings,
       delivery_provider: deliverySettings.provider,
       shipday_delivery_fee_cents: deliverySettings.shipday_fee_cents,
+      // House Delivery update: the storefront resolves flat-fee
+      // (no-quote) mode from the three switches — Shipday flat fee
+      // applies only when Shipday is the ONLY provider enabled.
+      delivery_doordash_enabled: deliverySettings.doordash_enabled,
+      delivery_shipday_enabled: deliverySettings.shipday_enabled,
+      delivery_house_enabled: deliverySettings.house_enabled,
     },
     hours,
     unavailable: [...unavailable],
@@ -290,6 +302,26 @@ export async function POST(req: Request) {
         ) {
           throw new Error("Enter a valid Shipday delivery fee (or 0 for free).");
         }
+        // House Delivery update: the three ON/OFF switches + the
+        // radius tiers are OPTIONAL in the payload — when absent
+        // they keep their current values (older panels never reset
+        // them by accident).
+        const doordash_enabled =
+          body.doordash_enabled === undefined
+            ? currentDelivery.doordash_enabled
+            : body.doordash_enabled === true;
+        const shipday_enabled =
+          body.shipday_enabled === undefined
+            ? currentDelivery.shipday_enabled
+            : body.shipday_enabled === true;
+        const house_enabled =
+          body.house_enabled === undefined
+            ? currentDelivery.house_enabled
+            : body.house_enabled === true;
+        const house_tiers =
+          body.house_tiers === undefined
+            ? currentDelivery.house_tiers
+            : parseHouseTiers(body.house_tiers);
         await setDeliverySettings({
           max_miles,
           min_subtotal_cents,
@@ -297,6 +329,10 @@ export async function POST(req: Request) {
           markup_percent,
           provider,
           shipday_fee_cents,
+          doordash_enabled,
+          shipday_enabled,
+          house_enabled,
+          house_tiers,
         });
         await logAudit(actor, "admin.set_delivery_settings", {
           max_miles,
@@ -305,6 +341,10 @@ export async function POST(req: Request) {
           markup_percent,
           provider,
           shipday_fee_cents,
+          doordash_enabled,
+          shipday_enabled,
+          house_enabled,
+          house_tiers,
         });
         break;
       }

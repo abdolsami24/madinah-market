@@ -13,7 +13,7 @@
 
 import { NextResponse } from "next/server";
 import { getServiceClient, supabaseConfigured, verifyKitchenUser } from "@/lib/supabase/server";
-import { dispatchDeliveryForOrder, refreshDeliveryStatus, type DeliveryOrderLike } from "@/lib/delivery";
+import { dispatchDeliveryForOrder, refreshDeliveryStatus, registerHouseDelivery, type DeliveryOrderLike } from "@/lib/delivery";
 import { logAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -51,6 +51,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "That order is not a delivery order." }, { status: 400 });
   }
   const actor = user.email ?? user.id;
+
+  // House Delivery orders have NO external dispatch — never let the
+  // DoorDash retry/refresh below touch them. "Retry" simply
+  // re-registers the house order (status + driver token); "refresh"
+  // reports the status the driver page last set.
+  if ((row as { delivery_provider?: string | null }).delivery_provider === "house") {
+    if (action === "refresh") {
+      return NextResponse.json({ ok: true, delivery_status: row.delivery_status ?? "pending" });
+    }
+    await registerHouseDelivery(row as { id: number; driver_token?: string | null });
+    await logAudit(actor, "delivery.house_register", { order_id: orderId });
+    return NextResponse.json({ ok: true });
+  }
 
   if (action === "refresh") {
     const result = await refreshDeliveryStatus(row);
