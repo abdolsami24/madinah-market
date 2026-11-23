@@ -1341,7 +1341,13 @@ export default function Storefront({
                 : undefined
             }
           >
-            <div className="sheet-inner">
+            <div
+              className={
+                checkoutStep === 0
+                  ? "sheet-inner sheet-inner--wide"
+                  : "sheet-inner"
+              }
+            >
             <div className="panel-head">
               <h3>
                 {checkoutStep === 0
@@ -1382,12 +1388,67 @@ export default function Storefront({
             </div>
             <div className="checkout-scroll" ref={checkoutScrollRef}>
             {checkoutStep === 0 && (
-              <>
-                {renderLines(true)}
-                {lines.length === 0 && (
-                  <p>Your bag is empty — go back to the menu and add something tasty.</p>
+              <div className="bag-layout">
+                <div className="bag-lines">
+                  {renderLines(true)}
+                  {lines.length === 0 && (
+                    <p>Your bag is empty — go back to the menu and add something tasty.</p>
+                  )}
+                </div>
+                {lines.length > 0 && (
+                  <aside className="bag-summary">
+                    <div className="bag-howto">
+                      <h4>How to get it</h4>
+                      {reviewSummaryJsx}
+                    </div>
+                    <div className="bag-tip">
+                      <h4>Add a tip</h4>
+                      <div className="tip-tiles">
+                        {[10, 15, 20].map((pct) => (
+                          <button
+                            type="button"
+                            key={pct}
+                            className={
+                              "tip-tile" +
+                              (!tipCustom && tipPercent === pct ? " on" : "")
+                            }
+                            onClick={() => {
+                              setTipPercent(pct);
+                              setTipCustom("");
+                            }}
+                          >
+                            <strong>{pct}%</strong>
+                            <small>
+                              {formatCents(Math.round((subtotal * pct) / 100))}
+                            </small>
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          className={
+                            "tip-tile" +
+                            (!tipCustom && tipPercent === 0 ? " on" : "")
+                          }
+                          onClick={() => {
+                            setTipPercent(0);
+                            setTipCustom("");
+                          }}
+                        >
+                          <strong>No tip</strong>
+                          <small>$0.00</small>
+                        </button>
+                      </div>
+                      {tipCustom && (
+                        <p className="bag-tip-note">
+                          Custom tip: {formatCents(tip)} — you can change it
+                          on the next screen.
+                        </p>
+                      )}
+                    </div>
+                    {breakdownJsx}
+                  </aside>
                 )}
-              </>
+              </div>
             )}
             {checkoutStep === 2 && (
               <>
