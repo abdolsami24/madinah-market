@@ -781,6 +781,62 @@ button.sheet-bar:disabled { opacity: 0.55; cursor: not-allowed; }
   flex: none;
 }
 .cart-line > span:first-of-type { flex: 1; }
+
+/* Bag screen, Shondiz-style (2026-11-22): on desktop the bag is two
+   columns — items left, a sticky summary card right (How to get it /
+   tip tiles with $ amounts / totals). On phones the summary card is
+   hidden entirely and the bag is the single column it always was. */
+.sheet-inner--wide { max-width: 1080px; }
+.bag-summary h4 { margin: 0 0 0.5rem; font-size: 0.98rem; }
+.bag-howto { margin-bottom: 1.1rem; }
+.bag-tip { margin-bottom: 1.1rem; }
+.tip-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.45rem;
+}
+.tip-tile {
+  border: 1px solid var(--hairline);
+  background: var(--bg);
+  border-radius: 12px;
+  padding: 0.45rem 0.2rem;
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink);
+}
+.tip-tile strong { display: block; font-size: 0.95rem; }
+.tip-tile small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-top: 0.1rem;
+}
+.tip-tile.on {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+.tip-tile.on small { color: #ffe9a8; }
+.bag-tip-note { font-size: 0.85rem; color: var(--muted); margin: 0.5rem 0 0; }
+@media (min-width: 900px) {
+  .bag-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 330px;
+    gap: 1.4rem;
+    align-items: start;
+  }
+  .bag-summary {
+    position: sticky;
+    top: 0;
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 18px;
+    padding: 1rem 1.1rem;
+  }
+}
+@media (max-width: 899px) {
+  .bag-summary { display: none; }
+}
 .panel-head {
   display: flex;
   align-items: center;
