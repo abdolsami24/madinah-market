@@ -81,3 +81,78 @@ export function normalizeShipdayFeeCents(value: unknown, fallback = DEFAULT_SHIP
 export function needsDeliveryQuote(provider: DeliveryProviderName): boolean {
   return provider === "doordash";
 }
+
+// ---- House Delivery (2026-11-23) ------------------------------------------------
+// A third provider: the restaurant's own driver. Admin → Operations →
+// Delivery holds three independent ON/OFF switches (DoorDash Drive,
+// Shipday, House Delivery); when several are ON the resolution order
+// is House → DoorDash → Shipday (see lib/delivery.ts). House pricing
+// is radius tiers the admin edits: "up to X miles → $Y", stored as
+// JSON in site_settings (house_delivery_tiers). The distance is the
+// straight-line (haversine) radius from the restaurant, exactly like
+// the DoorDash cap — beyond the largest tier House is not offered
+// and resolution falls through to the next enabled provider.
+
+/** Any provider an order can end up with (the legacy switch had two). */
+export type AnyDeliveryProvider = DeliveryProviderName | "house";
+
+export interface HouseTier {
+  miles: number;
+  fee_cents: number;
+}
+
+/** Proposed starting tiers (Sami's spec, 2026-11-23). */
+export const DEFAULT_HOUSE_TIERS: HouseTier[] = [
+  { miles: 1, fee_cents: 399 },
+  { miles: 2, fee_cents: 599 },
+  { miles: 3, fee_cents: 799 },
+];
+
+/**
+ * Parses the stored house_delivery_tiers value (a JSON array of
+ * {miles, fee_cents} or a plain array in a jsonb column). Invalid or
+ * empty input falls back to the defaults; rows are clamped to sane
+ * ranges, de-duplicated by miles and sorted ascending.
+ */
+export function parseHouseTiers(value: unknown): HouseTier[] {
+  let raw: unknown = value;
+  if (typeof raw === "string") {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = null;
+    }
+  }
+  if (!Array.isArray(raw)) return [...DEFAULT_HOUSE_TIERS];
+  const byMiles = new Map<number, number>();
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+    const miles = Number(e.miles);
+    const fee = Number(e.fee_cents);
+    if (!Number.isFinite(miles) || miles <= 0 || miles > 50) continue;
+    if (!Number.isFinite(fee) || fee < 0 || fee > 100000) continue;
+    byMiles.set(Math.round(miles * 100) / 100, Math.round(fee));
+  }
+  const tiers = [...byMiles.entries()]
+    .map(([miles, fee_cents]) => ({ miles, fee_cents }))
+    .sort((a, b) => a.miles - b.miles);
+  return tiers.length > 0 ? tiers : [...DEFAULT_HOUSE_TIERS];
+}
+
+/** The tier fee covering a distance, or null when beyond every tier. */
+export function houseFeeForMiles(
+  tiers: HouseTier[],
+  miles: number
+): { fee_cents: number; tier_miles: number } | null {
+  if (!Number.isFinite(miles) || miles < 0) return null;
+  for (const tier of tiers) {
+    if (miles <= tier.miles) return { fee_cents: tier.fee_cents, tier_miles: tier.miles };
+  }
+  return null;
+}
+
+/** The largest radius House Delivery serves under these tiers. */
+export function houseMaxMiles(tiers: HouseTier[]): number {
+  return tiers.length > 0 ? tiers[tiers.length - 1].miles : 0;
+}

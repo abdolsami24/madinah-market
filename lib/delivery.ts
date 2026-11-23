@@ -8,7 +8,7 @@
 // degrades to defaults / logged no-ops instead of throwing, so the
 // live site keeps working exactly as before.
 
-import { randomUUID } from "crypto";
+import { randomBytes, randomUUID } from "crypto";
 import { getServiceClient } from "./supabase/server";
 import { geocodeAddress, milesBetween, restaurantCoords } from "./geocode";
 import {
@@ -18,7 +18,19 @@ import {
   mockNextStatus,
   doordashMode,
 } from "./doordash";
-import { computeDeliveryMarkupCents, DOORDASH_MAX_MILES, normalizeShipdayFeeCents, parseDeliveryProvider, type DeliveryProviderName } from "./deliveryPricing";
+import {
+  computeDeliveryMarkupCents,
+  DOORDASH_MAX_MILES,
+  normalizeShipdayFeeCents,
+  parseDeliveryProvider,
+  parseHouseTiers,
+  houseFeeForMiles,
+  houseMaxMiles,
+  DEFAULT_HOUSE_TIERS,
+  type DeliveryProviderName,
+  type AnyDeliveryProvider,
+  type HouseTier,
+} from "./deliveryPricing";
 import { smsDeliveryDelivered } from "./sms";
 
 // ---- Settings (site_settings, same pattern as the hours editor) -------------
@@ -38,10 +50,25 @@ export interface DeliverySettings {
    * Active delivery provider (provider switch): 'doordash' (default —
    * Stage 3 behavior) or 'shipday' (flat fee, no quote; dispatch via
    * lib/shipday.ts). Switching affects NEW paid orders only.
+   * Since the House Delivery update this is a DERIVED legacy view
+   * (the first enabled provider in priority order, mapped back to
+   * the two legacy names) kept so older readers stay sane — the
+   * three switches below are the real state.
    */
   provider: DeliveryProvider;
   /** Flat delivery fee charged to the customer in Shipday mode, cents. */
   shipday_fee_cents: number;
+  /**
+   * House Delivery update (2026-11-23): three independent ON/OFF
+   * switches. Resolution order when several are ON: House →
+   * DoorDash → Shipday, with fall-through when a provider cannot
+   * serve the address (House radius tiers / DoorDash radius cap).
+   */
+  doordash_enabled: boolean;
+  shipday_enabled: boolean;
+  house_enabled: boolean;
+  /** House Delivery radius tiers ("up to X miles → $Y"), sorted. */
+  house_tiers: HouseTier[];
 }
 
 export const DEFAULT_DELIVERY_SETTINGS: DeliverySettings = {
@@ -51,6 +78,10 @@ export const DEFAULT_DELIVERY_SETTINGS: DeliverySettings = {
   markup_percent: 0,
   provider: "doordash",
   shipday_fee_cents: 699,
+  doordash_enabled: true,
+  shipday_enabled: false,
+  house_enabled: false,
+  house_tiers: DEFAULT_HOUSE_TIERS,
 };
 
 const DELIVERY_SETTING_KEYS = [
@@ -60,6 +91,10 @@ const DELIVERY_SETTING_KEYS = [
   "delivery_markup_percent",
   "delivery_provider",
   "shipday_delivery_fee_cents",
+  "delivery_doordash_enabled",
+  "delivery_shipday_enabled",
+  "delivery_house_enabled",
+  "house_delivery_tiers",
 ] as const;
 
 function numValue(value: unknown, fallback: number): number {
@@ -67,8 +102,22 @@ function numValue(value: unknown, fallback: number): number {
   return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
+function boolValue(value: unknown): boolean | null {
+  if (value === true || value === "true") return true;
+  if (value === false || value === "false") return false;
+  return null;
+}
+
+/** The provider an order resolves to first under these settings. */
+export function primaryProvider(settings: DeliverySettings): AnyDeliveryProvider {
+  if (settings.house_enabled) return "house";
+  if (settings.doordash_enabled) return "doordash";
+  if (settings.shipday_enabled) return "shipday";
+  return settings.provider;
+}
+
 export async function getDeliverySettings(): Promise<DeliverySettings> {
-  const settings = { ...DEFAULT_DELIVERY_SETTINGS };
+  const settings = { ...DEFAULT_DELIVERY_SETTINGS, house_tiers: [...DEFAULT_HOUSE_TIERS] };
   try {
     const supabase = getServiceClient();
     const { data, error } = await supabase
@@ -76,28 +125,50 @@ export async function getDeliverySettings(): Promise<DeliverySettings> {
       .select("key, value")
       .in("key", [...DELIVERY_SETTING_KEYS]);
     if (error) return settings;
+    const raw = new Map<string, unknown>();
     for (const row of data ?? []) {
-      const v = (row as { value: unknown }).value;
-      switch (row.key as string) {
-        case "delivery_max_miles":
-          settings.max_miles = Math.min(numValue(v, 8) || 8, DOORDASH_MAX_MILES);
-          break;
-        case "delivery_min_subtotal_cents":
-          settings.min_subtotal_cents = Math.round(numValue(v, 0));
-          break;
-        case "delivery_markup_flat_cents":
-          settings.markup_flat_cents = Math.round(numValue(v, 0));
-          break;
-        case "delivery_markup_percent":
-          settings.markup_percent = Math.min(numValue(v, 0), 100);
-          break;
-        case "delivery_provider":
-          settings.provider = parseDeliveryProvider(v);
-          break;
-        case "shipday_delivery_fee_cents":
-          settings.shipday_fee_cents = normalizeShipdayFeeCents(v, settings.shipday_fee_cents);
-          break;
-      }
+      raw.set(row.key as string, (row as { value: unknown }).value);
+    }
+    if (raw.has("delivery_max_miles")) {
+      settings.max_miles = Math.min(numValue(raw.get("delivery_max_miles"), 8) || 8, DOORDASH_MAX_MILES);
+    }
+    if (raw.has("delivery_min_subtotal_cents")) {
+      settings.min_subtotal_cents = Math.round(numValue(raw.get("delivery_min_subtotal_cents"), 0));
+    }
+    if (raw.has("delivery_markup_flat_cents")) {
+      settings.markup_flat_cents = Math.round(numValue(raw.get("delivery_markup_flat_cents"), 0));
+    }
+    if (raw.has("delivery_markup_percent")) {
+      settings.markup_percent = Math.min(numValue(raw.get("delivery_markup_percent"), 0), 100);
+    }
+    if (raw.has("delivery_provider")) {
+      settings.provider = parseDeliveryProvider(raw.get("delivery_provider"));
+    }
+    if (raw.has("shipday_delivery_fee_cents")) {
+      settings.shipday_fee_cents = normalizeShipdayFeeCents(
+        raw.get("shipday_delivery_fee_cents"),
+        settings.shipday_fee_cents
+      );
+    }
+    // The three switches. MIGRATION: until any switch key has ever
+    // been saved, the switches mirror the legacy single provider
+    // exactly (shipday mode → Shipday ON / DoorDash OFF; otherwise
+    // DoorDash ON / Shipday OFF; House starts OFF) so the live site
+    // behaves identically the moment this code deploys.
+    const dd = boolValue(raw.get("delivery_doordash_enabled"));
+    const sd = boolValue(raw.get("delivery_shipday_enabled"));
+    const hs = boolValue(raw.get("delivery_house_enabled"));
+    if (dd === null && sd === null && hs === null) {
+      settings.doordash_enabled = settings.provider !== "shipday";
+      settings.shipday_enabled = settings.provider === "shipday";
+      settings.house_enabled = false;
+    } else {
+      settings.doordash_enabled = dd ?? settings.provider !== "shipday";
+      settings.shipday_enabled = sd ?? settings.provider === "shipday";
+      settings.house_enabled = hs ?? false;
+    }
+    if (raw.has("house_delivery_tiers")) {
+      settings.house_tiers = parseHouseTiers(raw.get("house_delivery_tiers"));
     }
   } catch {
     /* defaults */
@@ -108,17 +179,27 @@ export async function getDeliverySettings(): Promise<DeliverySettings> {
 export async function setDeliverySettings(input: DeliverySettings): Promise<void> {
   const supabase = getServiceClient();
   const now = new Date().toISOString();
+  const tiers = parseHouseTiers(input.house_tiers);
+  // The legacy single-provider key follows the switches (first
+  // enabled in priority order; House maps to 'doordash' there since
+  // the legacy type has no 'house') so any older reader still sees
+  // a sane value.
+  const primary = primaryProvider({ ...input, house_tiers: tiers });
   const rows = [
     { key: "delivery_max_miles", value: input.max_miles, updated_at: now },
     { key: "delivery_min_subtotal_cents", value: input.min_subtotal_cents, updated_at: now },
     { key: "delivery_markup_flat_cents", value: input.markup_flat_cents, updated_at: now },
     { key: "delivery_markup_percent", value: input.markup_percent, updated_at: now },
-    { key: "delivery_provider", value: parseDeliveryProvider(input.provider), updated_at: now },
+    { key: "delivery_provider", value: parseDeliveryProvider(primary), updated_at: now },
     {
       key: "shipday_delivery_fee_cents",
       value: normalizeShipdayFeeCents(input.shipday_fee_cents),
       updated_at: now,
     },
+    { key: "delivery_doordash_enabled", value: input.doordash_enabled === true, updated_at: now },
+    { key: "delivery_shipday_enabled", value: input.shipday_enabled === true, updated_at: now },
+    { key: "delivery_house_enabled", value: input.house_enabled === true, updated_at: now },
+    { key: "house_delivery_tiers", value: tiers, updated_at: now },
   ];
   const { error } = await supabase
     .from("site_settings")
@@ -156,9 +237,70 @@ export type QuoteOutcome =
       quote: StoredQuote;
       markup_cents: number;
       estimated_dropoff_at: string | null;
+      /** 'house' | 'shipday' | 'live' | 'mock' — who will deliver. */
+      provider_mode: string;
     }
   | { ok: false; error: "not_found" | "far" | "unavailable"; message: string };
 
+/**
+ * Stores a locally-priced quote (House tiers / Shipday flat fee) in
+ * the same delivery_quotes table the DoorDash quotes use, so
+ * checkout verifies EVERY provider's fee the same way: re-loaded
+ * from the stored row, never from the browser.
+ */
+async function storeLocalQuote(input: {
+  providerMode: "house" | "shipday";
+  feeCents: number;
+  miles: number;
+  address: string;
+  phone?: string;
+  name?: string;
+}): Promise<QuoteOutcome> {
+  const expiresAt = new Date(Date.now() + 10 * 60000).toISOString();
+  try {
+    const supabase = getServiceClient();
+    const { data, error } = await supabase
+      .from("delivery_quotes")
+      .insert({
+        quote_id: `${input.providerMode}-${randomUUID()}`,
+        provider_mode: input.providerMode,
+        fee_cents: input.feeCents,
+        miles: Math.round(input.miles * 100) / 100,
+        dropoff_address: input.address,
+        dropoff_phone: input.phone ?? null,
+        dropoff_name: input.name ?? null,
+        expires_at: expiresAt,
+      })
+      .select("*")
+      .single();
+    if (error || !data) throw error ?? new Error("quote insert failed");
+    return {
+      ok: true,
+      quote: data as StoredQuote,
+      markup_cents: 0,
+      estimated_dropoff_at: null,
+      provider_mode: input.providerMode,
+    };
+  } catch (err) {
+    console.error("[delivery] local quote could not be stored:", err);
+    return {
+      ok: false,
+      error: "unavailable",
+      message:
+        "Delivery is being set up right now. Please try again shortly, or choose pickup.",
+    };
+  }
+}
+
+/**
+ * Resolves the delivery provider for an address and prices it.
+ * Priority (Sami's rule, 2026-11-23): House → DoorDash → Shipday
+ * among the ENABLED providers, falling through when a provider
+ * cannot serve the address (beyond the House tiers / beyond the
+ * DoorDash radius cap). Shipday has no radius — it is the last
+ * resort and always prices. When nothing is enabled (or every
+ * radius is exceeded with Shipday off), the outcome is 'far'.
+ */
 export async function createDeliveryQuote(input: {
   address: string;
   phone?: string;
@@ -178,15 +320,69 @@ export async function createDeliveryQuote(input: {
   const r = restaurantCoords();
   const miles = milesBetween(r.lat, r.lng, geo.lat, geo.lng);
   const maxMiles = Math.min(settings.max_miles || 8, DOORDASH_MAX_MILES);
-  if (miles > maxMiles) {
-    return {
-      ok: false,
-      error: "far",
-      message: `Sorry — that address is outside our delivery area (about ${miles.toFixed(
-        1
-      )} miles away; we deliver within ${maxMiles} miles). Please choose pickup.`,
-    };
+
+  // 1) House Delivery — the restaurant's own driver, radius tiers.
+  if (settings.house_enabled) {
+    const tier = houseFeeForMiles(settings.house_tiers, miles);
+    if (tier) {
+      return storeLocalQuote({
+        providerMode: "house",
+        feeCents: tier.fee_cents,
+        miles,
+        address: input.address,
+        phone: input.phone,
+        name: input.name,
+      });
+    }
+    // Beyond the largest tier: fall through to the next provider.
   }
+
+  // 2) DoorDash Drive — quoted fee, radius-capped.
+  if (settings.doordash_enabled && miles <= maxMiles) {
+    return createDoorDashStoredQuote(input, settings, miles);
+  }
+
+  // 3) Shipday — flat fee, no radius.
+  if (settings.shipday_enabled) {
+    return storeLocalQuote({
+      providerMode: "shipday",
+      feeCents: settings.shipday_fee_cents,
+      miles,
+      address: input.address,
+      phone: input.phone,
+      name: input.name,
+    });
+  }
+
+  // Nothing enabled can serve this address.
+  const limit = Math.max(
+    settings.house_enabled ? houseMaxMiles(settings.house_tiers) : 0,
+    settings.doordash_enabled ? maxMiles : 0
+  );
+  return {
+    ok: false,
+    error: "far",
+    message:
+      limit > 0
+        ? `Sorry — that address is outside our delivery area (about ${miles.toFixed(
+            1
+          )} miles away; we deliver within ${limit} miles). Please choose pickup.`
+        : "Delivery is not available right now. Please choose pickup, or call us at 720-763-0786.",
+  };
+}
+
+/** The original Stage 3 DoorDash quote path (extracted unchanged). */
+async function createDoorDashStoredQuote(
+  input: {
+    address: string;
+    phone?: string;
+    name?: string;
+    tip_cents?: number;
+    subtotal_cents?: number;
+  },
+  settings: DeliverySettings,
+  miles: number
+): Promise<QuoteOutcome> {
   // The external_delivery_id is generated HERE, at quote time (quotes
   // exist before orders do), and is bound to the order at checkout.
   // Accept / retry / status calls all reuse it — that is the
@@ -236,6 +432,7 @@ export async function createDeliveryQuote(input: {
       quote: data as StoredQuote,
       markup_cents: markupFor(created.fee_cents, settings),
       estimated_dropoff_at: created.estimated_dropoff_at,
+      provider_mode: created.provider_mode,
     };
   } catch (err) {
     // delivery_quotes missing (stage3-schema.sql not run yet) or DB down:
@@ -520,4 +717,98 @@ export async function refreshDeliveryStatus(
   if (!next) return { ok: true, status: order.delivery_status ?? null };
   await applyDeliveryStatus(order, next);
   return { ok: true, status: next };
+}
+
+// ---- House Delivery -------------------------------------------------------------
+
+/**
+ * House Delivery "dispatch" (markOrderPaid calls this instead of an
+ * external dispatch): there is NO external service — the order is
+ * simply marked as a house order awaiting the restaurant's own
+ * driver, and it gets its unguessable driver-page token if it does
+ * not have one yet. Fail-soft like everything else here: if the
+ * driver_token column does not exist yet
+ * (supabase/house-delivery-schema.sql not run), the order is still
+ * registered, just without a token (no driver QR until it exists).
+ */
+export async function registerHouseDelivery(order: {
+  id: number;
+  driver_token?: string | null;
+}): Promise<void> {
+  const patch: Record<string, unknown> = {
+    delivery_provider: "house",
+    delivery_status: "pending",
+    delivery_error: null,
+    delivery_status_at: new Date().toISOString(),
+  };
+  if (!order.driver_token) {
+    patch.driver_token = randomBytes(16).toString("hex");
+  }
+  try {
+    const supabase = getServiceClient();
+    let { error } = await supabase.from("orders").update(patch).eq("id", order.id);
+    if (error && /driver_token/i.test(error.message)) {
+      delete patch.driver_token;
+      ({ error } = await supabase.from("orders").update(patch).eq("id", order.id));
+    }
+    if (error) {
+      console.error("[delivery] house registration failed:", error.message);
+    }
+  } catch (err) {
+    console.error("[delivery] house registration failed:", err);
+  }
+}
+
+export interface DriverOrder {
+  id: number;
+  customer_name: string | null;
+  customer_phone: string | null;
+  fulfillment: string;
+  payment_status: string;
+  delivery_address: string | null;
+  delivery_provider: string | null;
+  delivery_status: string | null;
+  items_json: { name: string; qty: number; line_total_cents: number }[];
+  total_cents: number;
+  note?: string | null;
+}
+
+/** The order behind a driver-page token (null when unknown). */
+export async function getOrderByDriverToken(token: string): Promise<DriverOrder | null> {
+  if (!/^[a-f0-9]{32,64}$/.test(token)) return null;
+  try {
+    const supabase = getServiceClient();
+    const { data, error } = await supabase
+      .from("orders")
+      .select("*")
+      .eq("driver_token", token)
+      .maybeSingle();
+    if (error || !data) return null;
+    const order = data as DriverOrder;
+    if (order.delivery_provider !== "house") return null;
+    return order;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The driver tapped "Delivered ✓" on /d/<token>: applies the shared
+ * delivered path (status + the customer's delivered SMS, exactly
+ * once). Returns false when the token does not name a house order.
+ */
+export async function markHouseDelivered(token: string): Promise<boolean> {
+  const order = await getOrderByDriverToken(token);
+  if (!order) return false;
+  if (order.delivery_status === "delivered") return true;
+  await applyDeliveryStatus(
+    {
+      id: order.id,
+      customer_phone: order.customer_phone,
+      fulfillment: order.fulfillment,
+      delivery_status: order.delivery_status,
+    },
+    "delivered"
+  );
+  return true;
 }

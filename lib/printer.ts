@@ -33,6 +33,8 @@ import { getServiceClient } from "./supabase/server";
 import { formatCents, MENU_BY_ID } from "./menu";
 import { getPricingMenuById } from "./menuDb";
 import { formatDenverTime } from "./hours";
+import { encodeQr, qrModuleString } from "./qrcode";
+import { siteUrl } from "./stripe";
 
 // ---- Types --------------------------------------------------------------------
 
@@ -95,6 +97,9 @@ export interface TicketOrder {
   car_description?: string | null;
   /** Order-level checkout note — absent until supabase/order-note-schema.sql runs. */
   note?: string | null;
+  /** House Delivery — provider/token, absent until their columns exist. */
+  delivery_provider?: string | null;
+  driver_token?: string | null;
   items_json: {
     id?: string;
     name: string;
@@ -123,6 +128,30 @@ export interface PrintJob {
   printer: string | null;
   copies: number;
   ticket: string;
+  /**
+   * House Delivery driver QR (null for every other job — Sami's
+   * rule: QR exists ONLY on house-delivery tickets). The module map
+   * of the driver-page link, drawn by printer app v1.6+ in place of
+   * the ticket's @@QR@@ marker line. Older apps ignore the field.
+   */
+  qr?: { size: number; data: string } | null;
+}
+
+/**
+ * The driver-page URL for a house order, or null when the order is
+ * not a house delivery (or has no token yet). This is the ONLY
+ * source of driver QR links — ticket, kitchen board and admin all
+ * derive from the same token.
+ */
+export function driverUrlForOrder(order: {
+  fulfillment: string;
+  delivery_provider?: string | null;
+  driver_token?: string | null;
+}): string | null {
+  if (order.fulfillment !== "delivery") return null;
+  if (order.delivery_provider !== "house") return null;
+  if (!order.driver_token) return null;
+  return `${siteUrl()}/d/${order.driver_token}`;
 }
 
 export interface PrinterAdminView {
@@ -269,13 +298,18 @@ export function composeJobs(
   if (!config.enabled) return jobs;
   const pending = pendingOrderJobs(state, orders).slice(0, MAX_JOBS_PER_POLL);
   for (const order of pending) {
+    // House Delivery only: the driver QR rides inside the job (the
+    // website encodes it; the app just draws the modules).
+    const driverUrl = driverUrlForOrder(order);
+    const qrMatrix = driverUrl ? encodeQr(driverUrl) : null;
     jobs.push({
       job_id: `order:${order.id}`,
       kind: "order",
       order_id: order.id,
       printer: config.selected_printer,
       copies: config.copies,
-      ticket: buildTicketText(order, numbers),
+      ticket: buildTicketText(order, numbers, driverUrl),
+      qr: qrMatrix ? { size: qrMatrix.size, data: qrModuleString(qrMatrix) } : null,
     });
   }
   return jobs;
@@ -487,7 +521,8 @@ function denverDateTime(iso: string): string {
  */
 export function buildTicketText(
   order: TicketOrder,
-  numbers?: Record<string, string>
+  numbers?: Record<string, string>,
+  driverUrl?: string | null
 ): string {
   const lines: string[] = [];
   const rule = "=".repeat(W);
@@ -503,7 +538,9 @@ export function buildTicketText(
   lines.push(
     center(
       order.fulfillment === "delivery"
-        ? "DELIVERY"
+        ? order.delivery_provider === "house"
+          ? "HOUSE DELIVERY"
+          : "DELIVERY"
         : order.fulfillment === "curbside"
           ? "CURBSIDE"
           : "PICKUP"
@@ -564,6 +601,19 @@ export function buildTicketText(
     lines.push(...moneyRow("Tip", formatCents(order.tip_cents)));
   }
   lines.push(...moneyRow("TOTAL", formatCents(order.total_cents)));
+  // House Delivery ONLY (Sami's rule — DoorDash/Shipday tickets
+  // never carry a QR): the driver scans this code on the paper
+  // ticket to get the address in Google Maps plus the customer
+  // details. The @@QR@@ marker line is where printer app v1.6+
+  // draws the real QR image (the module map rides in the job).
+  if (driverUrl) {
+    lines.push(
+      dash,
+      center("** HOUSE DELIVERY **"),
+      center("DRIVER: SCAN FOR DIRECTIONS"),
+      "@@QR@@"
+    );
+  }
   lines.push(rule, center("Thank you!"), "");
   return lines.join("\n");
 }

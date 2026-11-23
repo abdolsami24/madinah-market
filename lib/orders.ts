@@ -6,7 +6,7 @@ import { getServiceClient } from "./supabase/server";
 import { notifyOwner, type NotifyOrder } from "./email";
 import type { ShipdayOrder } from "./shipday";
 import { dispatchShipdayForOrder } from "./shipday";
-import { dispatchDeliveryForOrder, getDeliverySettings } from "./delivery";
+import { dispatchDeliveryForOrder, getDeliverySettings, registerHouseDelivery } from "./delivery";
 import { smsOrderConfirmed } from "./sms";
 import { sendOrderToFreshKds } from "./freshkds";
 import { earnPointsForPaidOrder } from "./points";
@@ -36,6 +36,9 @@ export type OrderRow = NotifyOrder &
     // supabase/curbside-schema.sql; absent on a not-yet-migrated DB.
     car_description?: string | null;
     customer_here_at?: string | null;
+    // House Delivery — optional because the column arrives with
+    // supabase/house-delivery-schema.sql; absent before it runs.
+    driver_token?: string | null;
     // Order-level checkout note rides along via NotifyOrder (lib/email)
     // — optional because the column arrives with
     // supabase/order-note-schema.sql. getOrder's select("*") picks it
@@ -128,7 +131,20 @@ export async function markOrderPaid(
   if (updated.fulfillment === "delivery") {
     try {
       const deliverySettings = await getDeliverySettings();
-      if (deliverySettings.provider === "shipday") {
+      // The provider was FIXED at checkout (from the verified stored
+      // quote) and saved on the order — it wins over the current
+      // settings, so flipping a switch later never reroutes an order
+      // that was already placed. Orders from before the House
+      // Delivery update have no provider saved and fall back to the
+      // settings exactly as before.
+      const orderProvider = updated.delivery_provider ?? null;
+      if (orderProvider === "house") {
+        await registerHouseDelivery(updated);
+      } else if (orderProvider === "shipday") {
+        await dispatchShipdayForOrder(updated);
+      } else if (orderProvider === "doordash") {
+        await dispatchDeliveryForOrder(updated);
+      } else if (deliverySettings.provider === "shipday") {
         await dispatchShipdayForOrder(updated);
       } else {
         await dispatchDeliveryForOrder(updated);
