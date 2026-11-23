@@ -146,6 +146,11 @@ interface PanelOrder {
   note?: string | null;
   // House Delivery — absent until supabase/house-delivery-schema.sql runs.
   driver_token?: string | null;
+  // Live tracking — absent until supabase/live-tracking-schema.sql runs.
+  delivery_tracking_url?: string | null;
+  driver_lat?: number | null;
+  driver_lng?: number | null;
+  driver_loc_at?: string | null;
   delivery_quote?: {
     provider_mode: string;
     fee_cents: number;
@@ -1122,6 +1127,52 @@ export default function AdminPanel() {
                         </>
                       )}
                     </div>
+                    {selectedOrder.delivery_tracking_url &&
+                      selectedOrder.delivery_status !== "delivered" && (
+                        <div className="ops-btn-row">
+                          <a
+                            className="ops-btn primary"
+                            href={selectedOrder.delivery_tracking_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{ textDecoration: "none" }}
+                          >
+                            🗺️ Track driver live (DoorDash map)
+                          </a>
+                        </div>
+                      )}
+                    {selectedOrder.delivery_provider === "house" &&
+                      selectedOrder.driver_lat != null &&
+                      selectedOrder.driver_lng != null && (
+                        <div style={{ margin: "0.5rem 0" }}>
+                          <iframe
+                            key={selectedOrder.driver_loc_at ?? "loc"}
+                            title="Driver live location"
+                            src={`https://www.openstreetmap.org/export/embed.html?bbox=${(selectedOrder.driver_lng ?? 0) - 0.012}%2C${(selectedOrder.driver_lat ?? 0) - 0.012}%2C${(selectedOrder.driver_lng ?? 0) + 0.012}%2C${(selectedOrder.driver_lat ?? 0) + 0.012}&layer=mapnik&marker=${selectedOrder.driver_lat}%2C${selectedOrder.driver_lng}`}
+                            style={{
+                              width: "100%",
+                              height: 220,
+                              border: "1px solid #ccc",
+                              borderRadius: 12,
+                            }}
+                            loading="lazy"
+                          />
+                          <div style={{ fontSize: "0.9rem" }}>
+                            🛵 Driver live location
+                            {selectedOrder.driver_loc_at
+                              ? ` · updated ${fmtTime(selectedOrder.driver_loc_at)}`
+                              : ""}{" "}
+                            ·{" "}
+                            <a
+                              href={`https://www.google.com/maps?q=${selectedOrder.driver_lat},${selectedOrder.driver_lng}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Open in Google Maps
+                            </a>
+                          </div>
+                        </div>
+                      )}
                     {selectedOrder.delivery_provider !== "shipday" && (
                       <div className="ops-btn-row">
                         {(selectedOrder.payment_status === "paid" ||
