@@ -22,7 +22,10 @@
 import { NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
 import { supabaseConfigured } from "@/lib/supabase/server";
-import { applyDeliveryStatusByExternalId } from "@/lib/delivery";
+import {
+  applyDeliveryStatusByExternalId,
+  saveTrackingUrlByExternalId,
+} from "@/lib/delivery";
 import { doordashMode, getDoorDashDelivery } from "@/lib/doordash";
 
 export const dynamic = "force-dynamic";
@@ -120,12 +123,20 @@ export async function POST(req: Request) {
   if (status) {
     await applyDeliveryStatusByExternalId(externalId, status);
   }
+  // DoorDash payloads carry the live-map URL — keep ours fresh so
+  // the customer track page and Admin can show it.
+  if (typeof payload.tracking_url === "string" && payload.tracking_url) {
+    await saveTrackingUrlByExternalId(externalId, payload.tracking_url);
+  }
   // Defense in depth (live): the API's own status is authoritative.
   if (doordashMode() === "live") {
     try {
       const current = await getDoorDashDelivery(externalId);
       if (current && current.delivery_status !== status) {
         await applyDeliveryStatusByExternalId(externalId, current.delivery_status);
+      }
+      if (current?.tracking_url) {
+        await saveTrackingUrlByExternalId(externalId, current.tracking_url);
       }
     } catch (err) {
       console.warn("[doordash-webhook] status re-fetch failed:", err);
