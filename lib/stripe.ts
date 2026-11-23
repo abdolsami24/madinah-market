@@ -20,5 +20,9 @@ export function getStripe(): Stripe {
 }
 
 export function siteUrl(): string {
-  return (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").replace(/\/$/, "");
+  // The fallback is the production domain, never localhost: if the
+  // NEXT_PUBLIC_SITE_URL env var is missing in Vercel, customer and
+  // driver links (SMS tracking, printed QR codes) must still point
+  // at the real site. The env var wins whenever it is set.
+  return (process.env.NEXT_PUBLIC_SITE_URL || "https://www.taqwaacenter.com").replace(/\/$/, "");
 }
