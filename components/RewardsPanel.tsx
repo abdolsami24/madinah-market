@@ -19,7 +19,18 @@ export default function RewardsPanel() {
   const [state, setState] = useState<
     | { kind: "loading" }
     | { kind: "guest" }
-    | { kind: "member"; balance: number; history: PointsRow[] }
+    | {
+        kind: "member";
+        balance: number;
+        history: PointsRow[];
+        gate: {
+          unlocked: boolean;
+          monthSpentCents: number;
+          remainingToUnlockCents: number;
+          unlockTargetCents: number;
+          nextExpiry: { points: number; expiresAt: string } | null;
+        } | null;
+      }
   >({ kind: "loading" });
 
   useEffect(() => {
@@ -40,9 +51,19 @@ export default function RewardsPanel() {
             kind: "member",
             balance: me.points.balance,
             history: (me.points.history ?? []) as PointsRow[],
+            gate:
+              typeof me.points.unlocked === "boolean"
+                ? {
+                    unlocked: me.points.unlocked,
+                    monthSpentCents: me.points.monthSpentCents ?? 0,
+                    remainingToUnlockCents: me.points.remainingToUnlockCents ?? 0,
+                    unlockTargetCents: me.points.unlockTargetCents ?? 10000,
+                    nextExpiry: me.points.nextExpiry ?? null,
+                  }
+                : null,
           });
         } else {
-          setState({ kind: "member", balance: 0, history: [] });
+          setState({ kind: "member", balance: 0, history: [], gate: null });
         }
       } catch {
         setState({ kind: "guest" });
@@ -62,6 +83,15 @@ export default function RewardsPanel() {
           <li>
             <strong>100 points = $5.00 off</strong> — use whole 100-point blocks at checkout;
             the discount comes off before tax.
+          </li>
+          <li>
+            <strong>Spend $100 in a month to unlock your points.</strong> Points
+            collect from your very first order, and they unlock for spending in
+            any month where your paid orders reach $100.
+          </li>
+          <li>
+            Points <strong>expire 12 months</strong> after the day you earn them —
+            use them before they&apos;re gone.
           </li>
           <li>
             Points are for <strong>signed-in customers</strong> — guest orders don’t earn
@@ -87,9 +117,53 @@ export default function RewardsPanel() {
             <p>
               ⭐ Your balance: <strong>{state.balance} points</strong>
               {state.balance >= 100
-                ? ` — you have $${(Math.floor(state.balance / 100) * 5).toFixed(2)} off waiting for your next order!`
+                ? ` — worth $${(Math.floor(state.balance / 100) * 5).toFixed(2)} off when unlocked.`
                 : ` — earn ${100 - state.balance} more for $5.00 off.`}
             </p>
+            {state.gate && (
+              <div style={{ margin: "0.2rem 0 0.6rem" }}>
+                <div style={{ fontSize: "0.95rem" }}>
+                  {state.gate.unlocked ? (
+                    <>
+                      🔓 <strong>Unlocked this month</strong> — use your points
+                      at checkout!
+                    </>
+                  ) : (
+                    <>
+                      🔒 Spend{" "}
+                      <strong>
+                        ${(state.gate.remainingToUnlockCents / 100).toFixed(2)}
+                      </strong>{" "}
+                      more this month to unlock your points (you&apos;re at $
+                      {(state.gate.monthSpentCents / 100).toFixed(2)} of $100).
+                    </>
+                  )}
+                </div>
+                <div
+                  style={{
+                    height: 8,
+                    background: "#eee",
+                    borderRadius: 4,
+                    marginTop: 6,
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      width: `${Math.min(100, (state.gate.monthSpentCents / state.gate.unlockTargetCents) * 100)}%`,
+                      background: state.gate.unlocked ? "#2e7d32" : "#c9a227",
+                    }}
+                  />
+                </div>
+                {state.gate.nextExpiry && (
+                  <div style={{ fontSize: "0.9rem", marginTop: 6 }}>
+                    ⏳ {state.gate.nextExpiry.points} points expire on{" "}
+                    {new Date(state.gate.nextExpiry.expiresAt).toLocaleDateString()}.
+                  </div>
+                )}
+              </div>
+            )}
             {state.history.length > 0 && (
               <ul className="points-history">
                 {state.history.slice(0, 10).map((h, i) => (

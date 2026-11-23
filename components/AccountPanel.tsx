@@ -63,6 +63,14 @@ export default function AccountPanel() {
   }
   const [pointsBalance, setPointsBalance] = useState<number | null>(null);
   const [pointsHistory, setPointsHistory] = useState<PointsRow[]>([]);
+  // The $100-a-month unlock gate + next expiry (rules: lib/points.ts).
+  const [pointsGate, setPointsGate] = useState<{
+    unlocked: boolean;
+    monthSpentCents: number;
+    remainingToUnlockCents: number;
+    unlockTargetCents: number;
+    nextExpiry: { points: number; expiresAt: string } | null;
+  } | null>(null);
 
   const loadAccount = useCallback(async () => {
     const client = getBrowserClient();
@@ -100,6 +108,15 @@ export default function AccountPanel() {
             typeof me.points.balance === "number" ? me.points.balance : null
           );
           setPointsHistory((me.points.history ?? []) as PointsRow[]);
+          if (typeof me.points.unlocked === "boolean") {
+            setPointsGate({
+              unlocked: me.points.unlocked,
+              monthSpentCents: me.points.monthSpentCents ?? 0,
+              remainingToUnlockCents: me.points.remainingToUnlockCents ?? 0,
+              unlockTargetCents: me.points.unlockTargetCents ?? 10000,
+              nextExpiry: me.points.nextExpiry ?? null,
+            });
+          }
         }
       }
       if (ordersRes.ok) {
@@ -329,13 +346,59 @@ export default function AccountPanel() {
               <strong>{pointsBalance ?? 0} points</strong>
             </p>
             <p style={{ color: "#8a7a5f", marginTop: 0 }}>
-              Earn 1 point per $1 on paid orders · 100 points = $5.00 off at checkout.
-              {pointsBalance !== null && pointsBalance >= 100
-                ? " You can use your points on your next order!"
-                : pointsBalance !== null
-                  ? ` Earn ${100 - pointsBalance} more for $5.00 off.`
-                  : ""}
+              Earn 1 point per $1 on paid orders · 100 points = $5.00 off at
+              checkout · points expire 12 months after they&apos;re earned.
             </p>
+            {pointsGate && (
+              <div style={{ margin: "0.2rem 0 0.8rem" }}>
+                <div style={{ fontSize: "0.95rem" }}>
+                  {pointsGate.unlocked ? (
+                    <>
+                      🔓 <strong>Unlocked this month</strong> — you can use
+                      your points at checkout.
+                    </>
+                  ) : (
+                    <>
+                      🔒 Points unlock when you spend $100 in a month —
+                      you&apos;ve spent{" "}
+                      <strong>
+                        ${(pointsGate.monthSpentCents / 100).toFixed(2)}
+                      </strong>{" "}
+                      this month,{" "}
+                      <strong>
+                        ${(pointsGate.remainingToUnlockCents / 100).toFixed(2)}
+                      </strong>{" "}
+                      to go.
+                    </>
+                  )}
+                </div>
+                <div
+                  style={{
+                    height: 8,
+                    background: "#eee",
+                    borderRadius: 4,
+                    marginTop: 6,
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      width: `${Math.min(100, (pointsGate.monthSpentCents / pointsGate.unlockTargetCents) * 100)}%`,
+                      background: pointsGate.unlocked ? "#2e7d32" : "#c9a227",
+                    }}
+                  />
+                </div>
+                {pointsGate.nextExpiry && (
+                  <div
+                    style={{ fontSize: "0.9rem", color: "#8a7a5f", marginTop: 6 }}
+                  >
+                    ⏳ {pointsGate.nextExpiry.points} points expire on{" "}
+                    {new Date(pointsGate.nextExpiry.expiresAt).toLocaleDateString()}.
+                  </div>
+                )}
+              </div>
+            )}
             {pointsHistory.length > 0 && (
               <div>
                 {pointsHistory.map((h) => (

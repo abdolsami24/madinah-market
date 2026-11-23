@@ -177,6 +177,13 @@ export default function Storefront({
   // Loyalty (signed-in customers only).
   const [pointsBalance, setPointsBalance] = useState<number | null>(null);
   const [usePoints, setUsePoints] = useState(false);
+  // The $100-a-month unlock gate (rules: lib/points.ts). Null until
+  // /api/account/me answers; the server re-checks at checkout anyway.
+  const [pointsGate, setPointsGate] = useState<{
+    unlocked: boolean;
+    monthSpentCents: number;
+    remainingToUnlockCents: number;
+  } | null>(null);
   // Admin-controlled site state (switches, sold-out dishes, promotions,
   // uploaded photos). Defaults keep the site fully open until loaded.
   const [siteState, setSiteState] = useState<SiteState | null>(null);
@@ -361,6 +368,13 @@ export default function Storefront({
       // Loyalty balance for the checkout points box (rides along with /me).
       if (me.points && typeof me.points.balance === "number") {
         setPointsBalance(me.points.balance);
+        if (typeof me.points.unlocked === "boolean") {
+          setPointsGate({
+            unlocked: me.points.unlocked,
+            monthSpentCents: me.points.monthSpentCents ?? 0,
+            remainingToUnlockCents: me.points.remainingToUnlockCents ?? 0,
+          });
+        }
       }
     } catch {
       /* guest checkout is unaffected */
@@ -481,7 +495,7 @@ export default function Storefront({
   // Loyalty preview: whole 100-point blocks ($5.00 each), capped by the
   // subtotal. The server recomputes this authoritatively at checkout.
   const redeemBlocks =
-    usePoints && pointsBalance !== null
+    usePoints && pointsBalance !== null && pointsGate?.unlocked
       ? Math.min(Math.floor(pointsBalance / 100), Math.floor(subtotal / 500))
       : 0;
   const discountPreview = redeemBlocks * 500;
@@ -1805,7 +1819,18 @@ export default function Storefront({
 
             {accountEmail && pointsBalance !== null && (
               <div className="auth-box">
-                {pointsBalance >= 100 ? (
+                {pointsGate && !pointsGate.unlocked ? (
+                  <span>
+                    🔒 You have <strong>{pointsBalance} points</strong> — points
+                    unlock when you spend $100 in a month. You&apos;ve spent{" "}
+                    <strong>{formatCents(pointsGate.monthSpentCents)}</strong>{" "}
+                    this month —{" "}
+                    <strong>
+                      {formatCents(pointsGate.remainingToUnlockCents)}
+                    </strong>{" "}
+                    to go.
+                  </span>
+                ) : pointsBalance >= 100 ? (
                   <label style={{ display: "flex", gap: "0.5rem", alignItems: "center", cursor: "pointer" }}>
                     <input
                       type="checkbox"
