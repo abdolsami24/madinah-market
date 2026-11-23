@@ -681,6 +681,13 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
 .cart-bar button:disabled { opacity: 0.55; cursor: not-allowed; }
 .cartbar-spacer { height: 6rem; }
 #checkout, #menu-top { scroll-margin-top: 6.5rem; }
+/* Bars follow-up 2026-11-22: while the checkout panel is open it is
+   the only thing on the screen (the menu hides — the reference site's
+   separate bag page), and any field the customer taps or that is
+   scrolled into view stops fully ABOVE the fixed bottom bar, so the
+   bar never covers the field being filled. */
+.menu-layout.checkout-open { display: none; }
+html { scroll-padding-bottom: 7rem; }
 .panel-head {
   display: flex;
   align-items: center;
