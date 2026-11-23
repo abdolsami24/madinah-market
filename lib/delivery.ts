@@ -800,15 +800,31 @@ export async function getOrderByDriverToken(token: string): Promise<DriverOrder 
 export async function markHouseDelivered(token: string): Promise<boolean> {
   const order = await getOrderByDriverToken(token);
   if (!order) return false;
-  if (order.delivery_status === "delivered") return true;
-  await applyDeliveryStatus(
-    {
-      id: order.id,
-      customer_phone: order.customer_phone,
-      fulfillment: order.fulfillment,
-      delivery_status: order.delivery_status,
-    },
-    "delivered"
-  );
+  if (order.delivery_status !== "delivered") {
+    await applyDeliveryStatus(
+      {
+        id: order.id,
+        customer_phone: order.customer_phone,
+        fulfillment: order.fulfillment,
+        delivery_status: order.delivery_status,
+      },
+      "delivered"
+    );
+  }
+  // House delivery is finished end-to-end when the driver confirms:
+  // also close the kitchen side so the card leaves the board on its
+  // own. Quiet update only — no "ready" SMS or TV flow; the customer
+  // already received the delivered SMS from applyDeliveryStatus.
+  // Best-effort: if it fails, the kitchen can still tap the card.
+  try {
+    const supabase = getServiceClient();
+    await supabase
+      .from("orders")
+      .update({ kitchen_status: "completed" })
+      .eq("id", order.id)
+      .not("kitchen_status", "in", "(completed,cancelled)");
+  } catch (err) {
+    console.error("[delivery] house kitchen auto-complete failed:", err);
+  }
   return true;
 }
