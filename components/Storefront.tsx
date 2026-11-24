@@ -145,6 +145,10 @@ export default function Storefront({
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
+  // SMS opt-in (Twilio A2P): OPTIONAL and unticked by default — the
+  // customer can always order without agreeing to texts. The choice is
+  // sent with the order and saved on it as the consent record.
+  const [smsConsent, setSmsConsent] = useState(false);
   const [address, setAddress] = useState("");
   const [car, setCar] = useState("");
   const [note, setNote] = useState("");
@@ -928,6 +932,7 @@ export default function Storefront({
           delivery_quote_id:
             fulfillment === "delivery" && fee.kind === "ok" ? fee.quote_id : undefined,
           note: note.trim() || undefined,
+          sms_consent: smsConsent,
           ...(tipCustom && Number.isFinite(tipCustomCents)
             ? { tip_custom_cents: tipCustomCents }
             : { tip_percent: tipPercent }),
@@ -1683,26 +1688,49 @@ export default function Storefront({
                 inputMode="tel"
               />
             </div>
-            <p
-              style={{
-                fontSize: "0.8rem",
-                opacity: 0.75,
-                margin: "0.25rem 0 0.75rem",
-                lineHeight: 1.5,
-              }}
-            >
-              By providing your phone number, you agree to receive text
-              messages from Madinah Market about your order (confirmation,
-              ready-for-pickup, and delivery updates). Message frequency
-              varies; msg &amp; data rates may apply. Reply STOP to opt out.{" "}
-              <a href="/privacy" target="_blank" rel="noreferrer">
-                Privacy Policy
-              </a>{" "}
-              ·{" "}
-              <a href="/terms" target="_blank" rel="noreferrer">
-                Terms &amp; Conditions
-              </a>
-            </p>
+            <div className="field">
+              <label
+                htmlFor="co-sms"
+                style={{
+                  display: "flex",
+                  gap: "0.5rem",
+                  alignItems: "flex-start",
+                  fontWeight: 400,
+                }}
+              >
+                <input
+                  id="co-sms"
+                  type="checkbox"
+                  checked={smsConsent}
+                  onChange={(e) => setSmsConsent(e.target.checked)}
+                  style={{ marginTop: "0.2rem" }}
+                />
+                <span>
+                  <strong>Optional:</strong> Text me updates about my order
+                  (confirmation, ready-for-pickup, and delivery updates).
+                </span>
+              </label>
+              <p
+                style={{
+                  fontSize: "0.8rem",
+                  opacity: 0.75,
+                  margin: "0.25rem 0 0",
+                  lineHeight: 1.5,
+                }}
+              >
+                Consent is not a condition of purchase — you can order
+                without agreeing to texts. Message frequency varies; msg
+                &amp; data rates may apply. Reply STOP to opt out, HELP for
+                help.{" "}
+                <a href="/privacy" target="_blank" rel="noreferrer">
+                  Privacy Policy
+                </a>{" "}
+                ·{" "}
+                <a href="/terms" target="_blank" rel="noreferrer">
+                  Terms &amp; Conditions
+                </a>
+              </p>
+            </div>
 
             {fulfillment === "delivery" ? (
               <div className="field">
