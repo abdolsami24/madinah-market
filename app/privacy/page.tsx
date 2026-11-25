@@ -1,7 +1,7 @@
-// Privacy policy for Madinah Bakery & Kabob. Required by Google
+// Privacy policy for Madinah Market. Required by Google
 // for the "Sign in with Google" consent screen, and linked from the site.
 
-export const metadata = { title: "Privacy Policy — Madinah Bakery & Kabob" };
+export const metadata = { title: "Privacy Policy — Madinah Market" };
 
 export default function PrivacyPage() {
   return (
@@ -16,12 +16,12 @@ export default function PrivacyPage() {
       <p>
         <a href="/menu">← Back to menu</a>
       </p>
-      <h1>Privacy Policy — Madinah Bakery & Kabob</h1>
+      <h1>Privacy Policy — Madinah Market</h1>
       <p>
-        <em>Last updated: November 16, 2026</em>
+        <em>Last updated: November 24, 2026</em>
       </p>
       <p>
-        Madinah Bakery & Kabob ("we", "us") operates this website for
+        Madinah Market ("we", "us") operates this website for
         online food ordering (pickup and delivery). This page explains what
         information we collect and how we use it.
       </p>
@@ -62,6 +62,30 @@ export default function PrivacyPage() {
         </li>
       </ul>
 
+      <h2>Text messages (SMS)</h2>
+      <p>
+        At checkout you may <strong>optionally</strong> agree to receive
+        text messages about your order — for example an order
+        confirmation, a ready-for-pickup notice, and delivery status
+        updates. Agreeing is never required:{" "}
+        <strong>consent is not a condition of purchase</strong>, and you
+        can place an order without agreeing to texts.
+      </p>
+      <ul>
+        <li>
+          Message frequency varies — typically a few messages per order.
+        </li>
+        <li>Message and data rates may apply.</li>
+        <li>
+          Reply <strong>STOP</strong> to opt out at any time, and{" "}
+          <strong>HELP</strong> for help.
+        </li>
+        <li>
+          We record your choice with your order. We do not share your
+          phone number with third parties for their marketing.
+        </li>
+      </ul>
+
       <h2>What we do not do</h2>
       <ul>
         <li>We do not sell your personal information.</li>
@@ -84,7 +108,7 @@ export default function PrivacyPage() {
 
       <h2>Contact</h2>
       <p>
-        Madinah Bakery & Kabob
+        Madinah Market
         <br />
         3126 S Parker Rd, Aurora, CO 80014
         <br />
