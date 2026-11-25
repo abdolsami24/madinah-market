@@ -1,7 +1,7 @@
 // POST /api/checkout
 // Body: { items: [{id, qty}], customer_name, customer_phone, fulfillment,
 //         delivery_address?, car_description? (curbside), delivery_quote_id?,
-//         tip_percent?, tip_custom_cents?, note? }
+//         tip_percent?, tip_custom_cents?, note?, sms_consent? }
 // The server rebuilds the order from lib/menu (browser prices are never
 // trusted), saves it as "unpaid", then either returns a Stripe Checkout URL
 // (real mode) or { test_mode: true, order_id } (test mode).
@@ -62,6 +62,10 @@ export async function POST(req: Request) {
   const delivery_address = String(body.delivery_address ?? "").trim().slice(0, 300);
   const car_description = String(body.car_description ?? "").trim().slice(0, 80);
   const note = String(body.note ?? "").trim().slice(0, 200);
+  // SMS opt-in (Twilio A2P): true ONLY when the customer ticked the
+  // optional checkbox at checkout. Saved on the order as the consent
+  // record; lib/sms.ts sends customer texts only when this is true.
+  const sms_consent = body.sms_consent === true;
 
   if (customer_name.length < 2) return bad("Please enter your name");
   if (customer_phone.replace(/\D/g, "").length < 7) return bad("Please enter your phone number");
@@ -302,9 +306,31 @@ export async function POST(req: Request) {
       // fallback below until supabase/order-note-schema.sql has run —
       // an order must never fail to save because of the note.
       note: note || null,
+      // SMS consent record (dropped by the fallback below until
+      // supabase/sms-consent-schema.sql has run).
+      sms_consent,
     })
     .select("id")
     .single();
+  if (error && /sms_consent/i.test(error.message)) {
+    // supabase/sms-consent-schema.sql not run yet — save the order
+    // without the consent column (everything else is unchanged).
+    console.warn("[checkout] sms_consent column missing — inserting without it.");
+    ({ data: order, error } = await supabase
+      .from("orders")
+      .insert({
+        ...baseRow,
+        delivery_quote_id: delivery_quote_row_id,
+        delivery_markup_cents,
+        delivery_provider,
+        service_fee_cents: totals.service_fee_cents,
+        free_delivery,
+        car_description: fulfillment === "curbside" ? car_description : null,
+        note: note || null,
+      })
+      .select("id")
+      .single());
+  }
   if (error && /note/i.test(error.message)) {
     // supabase/order-note-schema.sql not run yet — save the order
     // without the note (everything else about the order is unchanged).
