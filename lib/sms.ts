@@ -57,6 +57,12 @@ interface SmsOrder {
   id: number;
   customer_phone: string | null;
   fulfillment: string;
+  // Twilio A2P consent: customer texts go ONLY to orders whose
+  // customer ticked the optional SMS checkbox at checkout (the choice
+  // is saved on the order as the consent record). Anything else —
+  // false, null, or a row from before the column existed — means
+  // NO texts. This is the rule that keeps the campaign compliant.
+  sms_consent?: boolean | null;
 }
 
 export function trackUrl(orderId: number): string {
@@ -65,7 +71,7 @@ export function trackUrl(orderId: number): string {
 
 /** (a) Order paid/confirmed — sent once from markOrderPaid. */
 export async function smsOrderConfirmed(order: SmsOrder): Promise<void> {
-  if (!order.customer_phone) return;
+  if (order.sms_consent !== true || !order.customer_phone) return;
   const kind =
     order.fulfillment === "delivery"
       ? "delivery"
@@ -84,7 +90,7 @@ export async function smsOrderConfirmed(order: SmsOrder): Promise<void> {
  * brought out to their car.
  */
 export async function smsPickupReady(order: SmsOrder): Promise<void> {
-  if (!order.customer_phone) return;
+  if (order.sms_consent !== true || !order.customer_phone) return;
   if (order.fulfillment === "curbside") {
     await sendSms(
       order.customer_phone,
@@ -108,7 +114,7 @@ export async function smsDeliveryOnItsWay(
   order: SmsOrder,
   link: string | null
 ): Promise<void> {
-  if (!order.customer_phone) return;
+  if (order.sms_consent !== true || !order.customer_phone) return;
   const url = link && link.startsWith("http") ? link : trackUrl(order.id);
   await sendSms(
     order.customer_phone,
@@ -118,7 +124,7 @@ export async function smsDeliveryOnItsWay(
 
 /** (c) Delivery order delivered (webhook / status refresh). */
 export async function smsDeliveryDelivered(order: SmsOrder): Promise<void> {
-  if (!order.customer_phone) return;
+  if (order.sms_consent !== true || !order.customer_phone) return;
   await sendSms(
     order.customer_phone,
     `Madinah Market: Your order #${order.id} has been delivered. Enjoy your meal! Questions? Call 720-763-0786.`
