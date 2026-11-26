@@ -77,6 +77,29 @@ export default async function HomePage() {
       )}
 
       <section className="hero-stage">
+        {heroDish && heroPhotoSrc && (
+          heroVideoSrc ? (
+            <video
+              className="hero-photo"
+              poster={heroPhotoSrc}
+              autoPlay
+              muted
+              loop
+              playsInline
+              preload="metadata"
+            >
+              <source src={heroVideoSrc} />
+            </video>
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              className="hero-photo"
+              src={heroPhotoSrc}
+              alt={heroDish.name}
+            />
+          )
+        )}
+        <div className="hero-shade" aria-hidden="true" />
         <div className="hero-inner">
           <div className="hero-copy">
             <p className="hero-kicker light">Aurora, Colorado · 100% halal</p>
@@ -98,28 +121,6 @@ export default async function HomePage() {
               3126 S Parker Rd, Aurora, CO 80014
             </p>
           </div>
-          {heroDish && heroPhotoSrc && (
-            heroVideoSrc ? (
-              <video
-                className="hero-photo"
-                poster={heroPhotoSrc}
-                autoPlay
-                muted
-                loop
-                playsInline
-                preload="metadata"
-              >
-                <source src={heroVideoSrc} />
-              </video>
-            ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                className="hero-photo"
-                src={heroPhotoSrc}
-                alt={heroDish.name}
-              />
-            )
-          )}
         </div>
       </section>
 
