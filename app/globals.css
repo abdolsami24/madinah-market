@@ -3,28 +3,20 @@
    warm off-white canvas, deep "stage" navy headers/hero, brand navy actions,
    gold for rewards / bag / highlights. System font stack throughout.
    (Palette: "Layout 1, Color 3 — Navy & Gold", picked by the owner 2026-11-18.)
-   TEST COPY 2026-11-26 — Raising Cane's restyle (spec:
-   raising-canes-restyle-spec-2026-11-26.md): storefront goes red / white /
-   black. --stage, --saffron and --gold tokens are KEPT at their navy/gold
-   values on purpose: the kitchen screen and admin panel still use them.
-   Storefront classes that referenced them are overridden to the Cane's
-   palette (--canes / --canes-dark) in their own rules below.
    Kitchen: dark, high-contrast, very large touch targets.
    TV board: near-black, huge numbers. */
 
 :root {
   /* Design tokens (light scheme) */
-  --canvas: #ffffff;
-  --surface: #ffffff;
-  --sunken: #f0f0ee;
+  --canvas: #f7f5ef;
+  --surface: #fffcf5;
+  --sunken: #eae6da;
   --ink: #1c1813;
   --ink-soft: #4a4238;
   --muted: #776d60;
   --hairline: rgba(28, 24, 19, 0.1);
-  --brand: #e1251b;
-  --brand-wash: #fdeceb;
-  --canes: #e1251b;
-  --canes-dark: #b91c12;
+  --brand: #173f6b;
+  --brand-wash: #e1e9f3;
   --stage: #0f2b4c;
   --stage-dark: #081e38;
   --on-stage: #f7f5ef;
@@ -69,8 +61,8 @@ h1, h2, h3 { letter-spacing: -0.02em; }
 
 /* Thin info bar — part of the stage-navy header family. */
 .topbar {
-  background: var(--canes);
-  color: rgba(255, 255, 255, 0.88);
+  background: var(--stage-dark);
+  color: var(--on-stage-dim);
   font-size: 0.82rem;
   padding: 0.42rem 1rem;
   display: flex;
@@ -79,12 +71,12 @@ h1, h2, h3 { letter-spacing: -0.02em; }
   justify-content: center;
   text-align: center;
 }
-.topbar a { color: #ffffff; text-decoration: none; font-weight: 700; }
+.topbar a { color: var(--saffron); text-decoration: none; font-weight: 600; }
 
 .site-header {
-  background: #ffffff;
-  color: var(--ink);
-  border-bottom: 1px solid var(--hairline);
+  background: var(--stage);
+  color: var(--on-stage);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   /* Bars cleanup 2026-11-22: the header stays pinned while the page
      scrolls (the thin info strip above it scrolls away), so the bag
      button is always reachable — the reference site's pattern. */
@@ -106,7 +98,7 @@ h1, h2, h3 { letter-spacing: -0.02em; }
   .header-inner { padding: 0.5rem 2.5rem; flex-wrap: nowrap; }
 }
 .site-header .brand {
-  color: var(--ink);
+  color: var(--on-stage);
   text-decoration: none;
   display: flex;
   flex-direction: column;
@@ -114,17 +106,16 @@ h1, h2, h3 { letter-spacing: -0.02em; }
 }
 .site-header .brand h1 {
   margin: 0;
-  font-size: 1.55rem;
-  font-weight: 900;
-  letter-spacing: -0.02em;
-  text-transform: uppercase;
-  color: var(--ink);
+  font-size: 1.45rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--on-stage);
 }
-.site-header h1 .gold { color: var(--canes); }
-.brand-sub { font-size: 0.8rem; color: var(--muted); font-weight: 500; }
+.site-header h1 .gold { color: var(--saffron); }
+.brand-sub { font-size: 0.8rem; color: var(--on-stage-dim); font-weight: 500; }
 .halal-badge {
-  background: var(--canes);
-  color: #ffffff;
+  background: var(--saffron);
+  color: var(--ink);
   font-weight: 800;
   border-radius: 999px;
   padding: 0.28rem 0.75rem;
@@ -144,37 +135,34 @@ h1, h2, h3 { letter-spacing: -0.02em; }
   flex: 1;
 }
 .main-nav a {
-  color: var(--ink);
+  color: var(--on-stage);
   border-radius: 999px;
   padding: 0.5rem 0.95rem;
   text-decoration: none;
   font-weight: 600;
   font-size: 0.95rem;
 }
-.main-nav a:hover { background: #f2f2f0; }
-.main-nav a.active { background: var(--brand-wash); color: var(--brand); font-weight: 700; }
+.main-nav a:hover { background: rgba(255, 255, 255, 0.08); }
+.main-nav a.active { background: rgba(201, 162, 39, 0.16); color: var(--saffron); }
 .bag-btn {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
-  background: var(--canes);
-  color: #ffffff;
+  background: var(--saffron);
+  color: var(--ink);
   border-radius: 999px;
-  padding: 0 1.15rem;
-  height: 46px;
+  padding: 0 1.05rem;
+  height: 44px;
   text-decoration: none;
-  font-weight: 800;
+  font-weight: 700;
   font-size: 0.95rem;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
   white-space: nowrap;
   margin-left: auto;
 }
-.bag-btn:hover { background: var(--canes-dark); }
 .nav-toggle {
   display: none;
-  background: #f0f0ee;
-  color: var(--ink);
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--on-stage);
   border: none;
   width: 44px;
   height: 44px;
@@ -197,7 +185,7 @@ h1, h2, h3 { letter-spacing: -0.02em; }
   .main-nav a {
     padding: 0.75rem 0.4rem;
     border-radius: 0;
-    border-bottom: 1px solid var(--hairline);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     font-size: 1.02rem;
   }
   .main-nav a.active { background: transparent; }
@@ -213,7 +201,7 @@ h1, h2, h3 { letter-spacing: -0.02em; }
 /* Standalone brand header (track page). */
 .site-header.standalone { text-align: center; padding: 1.6rem 1rem 1.4rem; }
 .site-header.standalone h1 { margin: 0; font-size: 2rem; font-weight: 800; letter-spacing: -0.03em; }
-.site-header.standalone p { margin: 0.3rem 0 0; color: var(--muted); }
+.site-header.standalone p { margin: 0.3rem 0 0; color: var(--on-stage-dim); }
 
 /* ============================ BANNERS ============================ */
 
@@ -241,19 +229,16 @@ h1, h2, h3 { letter-spacing: -0.02em; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--canes);
-  color: #ffffff;
+  background: var(--saffron);
+  color: var(--ink);
   text-decoration: none;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
+  font-weight: 700;
   font-size: 1rem;
   border-radius: 16px;
   min-height: 56px;
   padding: 0.6rem 1.6rem;
   border: none;
 }
-.btn-accent:hover { background: var(--canes-dark); }
 .btn-stage {
   display: inline-flex;
   align-items: center;
@@ -273,9 +258,7 @@ h1, h2, h3 { letter-spacing: -0.02em; }
   background: var(--brand);
   color: #fff;
   text-decoration: none;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
+  font-weight: 700;
   border-radius: 999px;
   padding: 0.65rem 1.4rem;
 }
@@ -283,32 +266,19 @@ h1, h2, h3 { letter-spacing: -0.02em; }
 
 /* ============================ HOME ============================ */
 
-.hero-stage { background: #111111; overflow: hidden; position: relative; }
-/* Cane's layout pass 2026-11-26: full-bleed media hero — the admin
-   photo/video fills the whole stage and the copy sits ON it over a
-   dark bottom gradient, like the approved demo picture. */
+.hero-stage { background: var(--stage); overflow: hidden; position: relative; }
 .hero-inner {
-  position: relative;
-  z-index: 2;
   max-width: 1200px;
   margin: 0 auto;
-  width: 100%;
-  min-height: 480px;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  padding: 2.6rem 1.25rem 2.3rem;
+  padding: 2.2rem 1.25rem 2.6rem;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.8rem;
+  align-items: center;
 }
 @media (min-width: 960px) {
-  .hero-inner { min-height: 580px; padding: 3rem 2.5rem 2.9rem; }
+  .hero-inner { grid-template-columns: 1fr 1fr; gap: 2.5rem; padding: 3.5rem 2.5rem 4rem; }
 }
-.hero-shade {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  background: linear-gradient(to top, rgba(8, 8, 8, 0.88) 0%, rgba(8, 8, 8, 0.48) 42%, rgba(8, 8, 8, 0.14) 78%, rgba(8, 8, 8, 0.05) 100%);
-}
-.hero-copy { max-width: 660px; }
 .hero-kicker {
   text-transform: uppercase;
   letter-spacing: 1.1px;
@@ -317,19 +287,17 @@ h1, h2, h3 { letter-spacing: -0.02em; }
   color: var(--brand);
   margin: 0 0 0.5rem;
 }
-.hero-kicker.light { color: #ff5147; }
+.hero-kicker.light { color: var(--saffron); }
 .hero-copy h2 {
   margin: 0;
   color: var(--on-stage);
-  font-size: 2.9rem;
-  line-height: 1.02;
-  font-weight: 900;
-  letter-spacing: -0.01em;
-  text-transform: uppercase;
-  text-shadow: 0 2px 22px rgba(0, 0, 0, 0.45);
+  font-size: 2.5rem;
+  line-height: 1.1;
+  font-weight: 800;
+  letter-spacing: -0.03em;
 }
 @media (min-width: 960px) {
-  .hero-copy h2 { font-size: 4.3rem; }
+  .hero-copy h2 { font-size: 3.4rem; }
 }
 .hero-sub {
   color: var(--on-stage-dim);
@@ -337,20 +305,8 @@ h1, h2, h3 { letter-spacing: -0.02em; }
   line-height: 1.5;
   margin: 1rem 0 0;
   max-width: 520px;
-  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.55);
 }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 0.8rem; margin-top: 1.5rem; }
-.hero-actions .btn-accent {
-  border-radius: 999px;
-  min-height: 60px;
-  padding: 0.7rem 2.3rem;
-  font-size: 1.1rem;
-}
-.hero-actions .btn-stage {
-  border-radius: 999px;
-  min-height: 60px;
-  background: rgba(0, 0, 0, 0.38);
-}
 .hero-meta {
   margin: 1.4rem 0 0;
   color: var(--on-stage-dim);
@@ -364,14 +320,15 @@ h1, h2, h3 { letter-spacing: -0.02em; }
   background: #4cc38a; flex: none;
 }
 .hero-photo {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
   width: 100%;
-  height: 100%;
+  height: 280px;
   object-fit: cover;
+  border-radius: 22px;
   display: block;
-  background: #111111;
+  background: var(--sunken);
+}
+@media (min-width: 960px) {
+  .hero-photo { height: 420px; }
 }
 
 .wrap { max-width: 1200px; margin: 0 auto; padding: 0 1.25rem 6.5rem; }
@@ -389,30 +346,18 @@ h1, h2, h3 { letter-spacing: -0.02em; }
 }
 .section-head h2 {
   margin: 0;
-  font-size: 1.85rem;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-  text-transform: uppercase;
+  font-size: 1.65rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
 }
 .section-head a { font-weight: 700; text-decoration: none; white-space: nowrap; }
 
 .category-title {
   margin: 2.2rem 0 1rem;
-  font-size: 1.85rem;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-  text-transform: uppercase;
+  font-size: 1.65rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
   color: var(--ink);
-}
-@media (min-width: 720px) {
-  .category-title { font-size: 2.05rem; }
-}
-/* Cane's layout pass: menu + home section titles get the demo's red
-   bar accent. Scoped so account/rewards/admin titles stay plain. */
-.menu-main .category-title,
-.home-section .category-title {
-  border-left: 9px solid var(--canes);
-  padding-left: 0.8rem;
 }
 
 /* "How would you like it?" service cards */
@@ -443,14 +388,14 @@ h1, h2, h3 { letter-spacing: -0.02em; }
   font-size: 1.45rem;
   margin-bottom: 0.3rem;
 }
-.how-card strong { font-size: 1.35rem; font-weight: 800; letter-spacing: -0.01em; text-transform: uppercase; }
+.how-card strong { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; }
 .how-card .how-desc { color: var(--ink-soft); font-size: 0.97rem; line-height: 1.45; }
 .how-card .how-link { color: var(--brand); font-weight: 700; font-size: 0.95rem; margin-top: 0.3rem; }
 
 /* Rewards band */
 .rewards-band {
-  background: var(--canes);
-  border-radius: 24px;
+  background: var(--stage);
+  border-radius: 28px;
   padding: 1.8rem;
   display: flex;
   flex-direction: column;
@@ -460,18 +405,16 @@ h1, h2, h3 { letter-spacing: -0.02em; }
   .rewards-band { flex-direction: row; align-items: center; padding: 2.5rem; }
   .rewards-band .band-copy { flex: 1; }
 }
-.rewards-band h2 { margin: 0; color: #ffffff; font-size: 1.9rem; font-weight: 800; letter-spacing: -0.01em; text-transform: uppercase; }
-.rewards-band p { color: rgba(255, 255, 255, 0.88); margin: 0.4rem 0 0; max-width: 560px; }
+.rewards-band h2 { margin: 0; color: var(--on-stage); font-size: 1.65rem; font-weight: 700; letter-spacing: -0.025em; }
+.rewards-band p { color: var(--on-stage-dim); margin: 0.4rem 0 0; max-width: 560px; }
 .band-kicker {
   text-transform: uppercase;
   letter-spacing: 1.1px;
   font-size: 0.72rem;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--saffron);
   margin: 0 0 0.4rem;
 }
-.rewards-band .btn-accent { background: #ffffff; color: var(--canes); }
-.rewards-band .btn-accent:hover { background: var(--brand-wash); }
 
 /* Category pills (Explore the menu) */
 .cat-pills { display: flex; flex-wrap: wrap; gap: 0.55rem; }
@@ -481,14 +424,14 @@ h1, h2, h3 { letter-spacing: -0.02em; }
   height: 44px;
   padding: 0 1.25rem;
   background: var(--surface);
-  border: 2px solid var(--ink);
+  border: 1px solid var(--hairline);
   border-radius: 999px;
   color: var(--ink);
   text-decoration: none;
-  font-weight: 700;
+  font-weight: 600;
   font-size: 0.95rem;
 }
-.cat-pill:hover { border-color: var(--canes); color: var(--canes); }
+.cat-pill:hover { border-color: var(--brand); }
 
 /* Visit box on home */
 .visit-box {
@@ -511,7 +454,7 @@ h1, h2, h3 { letter-spacing: -0.02em; }
   max-width: 1200px;
   margin: 1rem auto 0;
   padding: 1.1rem 1.25rem;
-  background: var(--brand-wash);
+  background: var(--saffron-wash);
   border-radius: 22px;
   color: var(--ink);
 }
@@ -524,7 +467,7 @@ h1, h2, h3 { letter-spacing: -0.02em; }
 }
 .promo-text { display: flex; flex-direction: column; gap: 0.2rem; }
 .promo-text strong { font-size: 1.12rem; font-weight: 700; letter-spacing: -0.01em; }
-.promo-dish { font-weight: 700; color: var(--canes-dark); }
+.promo-dish { font-weight: 600; color: var(--saffron-text); }
 .promo-box.big { margin-top: 1rem; }
 
 .qr-note {
@@ -540,18 +483,13 @@ h1, h2, h3 { letter-spacing: -0.02em; }
 
 /* ============================ MENU / CARDS ============================ */
 
-/* Cane's layout pass 2026-11-26: BIG cards — one per row on phones so
-   the photos stay large, 2 per row on tablets, 3 per row on desktop. */
 .menu-grid {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 1rem;
 }
-@media (min-width: 600px) {
-  .menu-grid { grid-template-columns: repeat(2, 1fr); }
-}
-@media (min-width: 1024px) {
-  .menu-grid { grid-template-columns: repeat(3, 1fr); }
+@media (min-width: 720px) {
+  .menu-grid { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
 }
 .card {
   background: var(--surface);
@@ -566,45 +504,45 @@ h1, h2, h3 { letter-spacing: -0.02em; }
 .card:hover { border-color: var(--brand); transform: translateY(-2px); }
 .card img {
   width: 100%;
-  aspect-ratio: 4 / 3;
-  height: auto;
+  height: 170px;
   object-fit: cover;
   background: var(--sunken);
   display: block;
 }
-.card-body { padding: 1.1rem 1.2rem 1.3rem; display: flex; flex-direction: column; gap: 0.4rem; flex: 1; }
-.card-body h3 { margin: 0; font-size: 1.24rem; font-weight: 800; letter-spacing: 0; text-transform: uppercase; }
+@media (min-width: 720px) {
+  .card img { height: 190px; }
+}
+.card-body { padding: 1rem; display: flex; flex-direction: column; gap: 0.35rem; flex: 1; }
+.card-body h3 { margin: 0; font-size: 1rem; font-weight: 600; letter-spacing: -0.01em; }
 .card-body .num { color: var(--muted); font-weight: 700; margin-right: 0.25rem; }
 .card-body p {
   margin: 0;
   color: var(--muted);
-  font-size: 0.93rem;
+  font-size: 0.85rem;
   line-height: 1.4;
   flex: 1;
   display: -webkit-box;
-  -webkit-line-clamp: 1;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 .price-row { display: flex; align-items: center; justify-content: space-between; margin-top: 0.5rem; gap: 0.5rem; }
-.price { font-size: 1.65rem; font-weight: 900; color: var(--canes); font-variant-numeric: tabular-nums; }
+.price { font-size: 1.02rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
 .price .from { font-size: 0.82rem; font-weight: 400; color: var(--muted); }
 .add-btn {
-  background: var(--canes);
-  color: #ffffff;
+  background: var(--brand-wash);
+  color: var(--brand);
   border: none;
   border-radius: 999px;
-  padding: 0 1.55rem;
-  height: 48px;
-  font-weight: 800;
-  font-size: 1.02rem;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
+  padding: 0 0.95rem;
+  height: 34px;
+  font-weight: 700;
+  font-size: 0.92rem;
   display: inline-flex;
   align-items: center;
   gap: 0.2rem;
 }
-.add-btn:hover { background: var(--canes-dark); }
+.add-btn:hover { background: #d9e4f2; }
 .add-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 a.card.home-card { text-decoration: none; color: var(--ink); }
 .has-options { color: var(--brand); font-size: 0.85rem; font-weight: 600; margin: 0; }
@@ -618,7 +556,7 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
 }
 .qty-controls { display: flex; align-items: center; gap: 0.45rem; }
 .qty-controls button {
-  width: 38px; height: 38px;
+  width: 34px; height: 34px;
   border-radius: 50%;
   border: 1.5px solid var(--brand);
   background: var(--surface);
@@ -629,57 +567,46 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
 }
 .qty-controls .count { font-weight: 800; min-width: 1.2rem; text-align: center; }
 
-/* Menu layout: category pill bar + main (Cane's layout pass
-   2026-11-26). The old left sidebar becomes ONE bold pill row that
-   sticks under the site header while the menu scrolls — same buttons,
-   same active-category behavior, new arrangement. */
+/* Menu layout: sidebar + main */
 .menu-layout {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.9rem;
+  grid-template-columns: 220px 1fr;
+  gap: 1.6rem;
   align-items: start;
   margin-top: 1.2rem;
 }
 .menu-sidebar {
   position: sticky;
-  /* Clears the sticky site header (single row = 88px). */
-  top: 5.5rem;
-  z-index: 40;
+  /* Clears the sticky site header (bars cleanup 2026-11-22). */
+  top: 6.25rem;
   display: flex;
-  flex-direction: row;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.55rem 0.1rem;
-  overflow-x: auto;
-  background: var(--canvas);
-  scrollbar-width: none;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.4rem 0;
 }
-.menu-sidebar::-webkit-scrollbar { display: none; }
-.menu-sidebar .sidebar-title { display: none; }
-.menu-sidebar > button {
-  flex: none;
-  white-space: nowrap;
-  text-align: center;
-  background: #ffffff;
-  border: 2px solid var(--ink);
-  border-radius: 999px;
-  padding: 0.5rem 1.15rem;
-  font-weight: 800;
-  font-size: 0.95rem;
+.menu-sidebar .sidebar-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.02em;
+  letter-spacing: 1.1px;
+  color: var(--muted);
+}
+.menu-sidebar > button {
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 12px;
+  padding: 0.6rem 0.85rem;
+  font-weight: 500;
+  font-size: 0.98rem;
   color: var(--ink);
-  min-height: 44px;
+  min-height: 42px;
 }
-.menu-sidebar > button:hover { border-color: var(--canes); color: var(--canes); }
-.menu-sidebar > button.active { background: var(--canes); border-color: var(--canes); color: #ffffff; }
-.menu-sidebar .sidebar-account { margin: 0 0 0 auto; padding-left: 0.5rem; flex: none; }
-.menu-sidebar .sidebar-account a { text-decoration: none; font-weight: 700; white-space: nowrap; }
-/* 861-959px: the header wraps to two rows, so the pill bar sticks lower. */
-@media (min-width: 861px) and (max-width: 959px) {
-  .menu-sidebar { top: 8.5rem; }
-}
+.menu-sidebar > button:hover { background: var(--sunken); }
+.menu-sidebar > button.active { background: var(--brand-wash); color: var(--brand); font-weight: 700; }
+.menu-sidebar .sidebar-account { margin-top: 0.8rem; border-top: 1px solid var(--hairline); padding-top: 0.8rem; }
+.menu-sidebar .sidebar-account a { text-decoration: none; font-weight: 600; }
 .menu-search input {
   width: 100%;
   padding: 0.8rem 1.1rem;
@@ -699,9 +626,25 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
   font-weight: 600;
   color: var(--ink);
 }
-/* Cane's layout pass 2026-11-26: the sticky pill bar above is the
-   layout at every width — the old <=720px static sidebar treatment
-   that used to live here is retired. */
+@media (max-width: 720px) {
+  .menu-layout { grid-template-columns: 1fr; }
+  .menu-sidebar {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+  }
+  .menu-sidebar .sidebar-title { width: 100%; }
+  .menu-sidebar > button {
+    border: 1px solid var(--hairline);
+    background: var(--surface);
+    border-radius: 999px;
+    min-height: 40px;
+  }
+  .menu-sidebar > button.active { background: var(--brand-wash); border-color: transparent; }
+  .menu-sidebar .sidebar-account { border-top: none; margin-top: 0; padding-top: 0; }
+}
 
 /* ============================ CART / CHECKOUT ============================ */
 
@@ -712,8 +655,8 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
   transform: translateX(-50%);
   bottom: 0.9rem;
   width: min(560px, calc(100% - 1.2rem));
-  background: var(--canes);
-  color: #ffffff;
+  background: var(--saffron);
+  color: var(--ink);
   border-radius: 999px;
   padding: 0.5rem 0.5rem 0.5rem 1.3rem;
   display: flex;
@@ -721,12 +664,12 @@ a.card.home-card { text-decoration: none; color: var(--ink); }
   justify-content: space-between;
   gap: 1rem;
   z-index: 40;
-  box-shadow: 0 6px 20px rgba(140, 16, 8, 0.32);
+  box-shadow: 0 6px 20px rgba(80, 64, 10, 0.28);
 }
 .cart-bar .total { font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .cart-bar button {
-  background: #ffffff;
-  color: var(--canes);
+  background: var(--ink);
+  color: var(--saffron);
   border: none;
   border-radius: 999px;
   padding: 0.65rem 1.25rem;
@@ -803,8 +746,8 @@ body:has(.checkout-sheet) .success-banner { display: none !important; }
   padding: 1rem 1.25rem;
   border: none;
   border-radius: 14px;
-  background: var(--canes);
-  color: #ffffff;
+  background: var(--gold);
+  color: var(--ink);
   font: inherit;
   font-size: 1.05rem;
   font-weight: 800;
@@ -873,7 +816,7 @@ button.sheet-bar:disabled { opacity: 0.55; cursor: not-allowed; }
   border-color: var(--brand);
   color: #fff;
 }
-.tip-tile.on small { color: #ffd9d4; }
+.tip-tile.on small { color: #ffe9a8; }
 .bag-tip-note { font-size: 0.85rem; color: var(--muted); margin: 0.5rem 0 0; }
 @media (min-width: 900px) {
   .bag-layout {
@@ -1007,7 +950,7 @@ button.bag-btn { border: none; cursor: pointer; font-family: inherit; }
   padding: 0.45rem 1rem;
   font-weight: 600;
 }
-.tip-row button.active { background: var(--canes); border-color: var(--canes); color: #ffffff; font-weight: 700; }
+.tip-row button.active { background: var(--saffron); border-color: var(--saffron); color: var(--ink); font-weight: 700; }
 .tip-custom { width: 110px; margin-top: 0.5rem; padding: 0.45rem 0.6rem; border: 1.5px solid var(--hairline); border-radius: 10px; background: var(--surface); }
 
 .breakdown { margin-top: 0.9rem; border-top: 1px solid var(--hairline); padding-top: 0.7rem; }
@@ -1023,9 +966,7 @@ button.bag-btn { border: none; cursor: pointer; font-family: inherit; }
   border-radius: var(--radius);
   padding: 0.95rem;
   font-size: 1.05rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
+  font-weight: 700;
   min-height: 56px;
 }
 .checkout-btn:disabled { opacity: 0.55; cursor: not-allowed; }
@@ -1054,7 +995,7 @@ button.bag-btn { border: none; cursor: pointer; font-family: inherit; }
 .here-box {
   margin-top: 0.9rem;
   background: var(--surface);
-  border: 2px solid var(--canes);
+  border: 2px solid var(--gold);
   border-radius: 16px;
   padding: 0.9rem;
   display: flex;
@@ -1066,8 +1007,8 @@ button.bag-btn { border: none; cursor: pointer; font-family: inherit; }
 }
 .here-box.done { border-color: var(--pistachio); background: var(--pistachio-wash); }
 .here-btn {
-  background: var(--canes);
-  color: #ffffff;
+  background: var(--gold);
+  color: #1c1813;
   border: none;
   border-radius: 999px;
   font-size: 1.25rem;
@@ -1100,15 +1041,15 @@ button.bag-btn { border: none; cursor: pointer; font-family: inherit; }
 /* ============================ FOOTER ============================ */
 
 .site-footer {
-  background: #111111;
-  color: rgba(255, 255, 255, 0.72);
+  background: var(--stage);
+  color: var(--on-stage-dim);
   text-align: center;
   padding: 2.2rem 1.25rem 6rem;
   font-size: 0.92rem;
   margin-top: 3.5rem;
   line-height: 1.6;
 }
-.site-footer a { color: #ff7a6b; text-decoration: none; font-weight: 600; }
+.site-footer a { color: var(--saffron); text-decoration: none; font-weight: 600; }
 
 /* ============================ TRACK ============================ */
 
@@ -1132,7 +1073,7 @@ button.bag-btn { border: none; cursor: pointer; font-family: inherit; }
 .timeline li.done { color: var(--ink); font-weight: 600; }
 .timeline li.done .dot { background: var(--pistachio); border-color: var(--pistachio); color: #fff; }
 .timeline li.now { color: var(--ink); font-weight: 800; }
-.timeline li.now .dot { border-color: var(--canes); background: var(--canes); color: #ffffff; }
+.timeline li.now .dot { border-color: var(--brand); background: var(--saffron); color: var(--ink); }
 
 /* ============================ DISH POPUP ============================ */
 
@@ -1174,7 +1115,7 @@ button.bag-btn { border: none; cursor: pointer; font-family: inherit; }
 }
 .popup-photo { width: 100%; height: 210px; object-fit: cover; display: block; background: var(--sunken); }
 .popup-body { padding: 1.1rem 1.2rem 1.3rem; }
-.popup-body h3 { margin: 0 0 0.2rem; font-size: 1.25rem; font-weight: 800; text-transform: uppercase; }
+.popup-body h3 { margin: 0 0 0.2rem; font-size: 1.25rem; font-weight: 700; }
 .popup-body .num { color: var(--muted); font-weight: 700; margin-right: 0.25rem; }
 .popup-desc { color: var(--muted); margin: 0 0 0.6rem; }
 .opt-group {
@@ -1369,6 +1310,164 @@ button.bag-btn { border: none; cursor: pointer; font-family: inherit; }
 /* Kitchen option lines */
 .k-opt { margin-left: 1.4rem; font-size: 0.94em; opacity: 0.92; }
 .k-note { font-weight: 700; }
+
+/* ===================== KITCHEN LIST VIEW (2026-11-26) =====================
+   The orders-list face of /kitchen (KitchenList.tsx) + the List|Board
+   toggle both views share. Kitchen-scoped (.kl- / .k-viewtoggle);
+   storefront rules are untouched. Status colors: New = accent red,
+   In progress = amber, Ready = green, late timer = red. */
+
+.k-viewtoggle {
+  display: inline-flex;
+  border: 2px solid var(--gold);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.k-viewtoggle button {
+  background: #2c2118;
+  color: #fdf6e9;
+  border: none;
+  padding: 0.6rem 1rem;
+  font-weight: 800;
+  font-size: 1rem;
+  cursor: pointer;
+}
+.k-viewtoggle button.on { background: var(--gold); color: #3a2403; }
+
+.kl-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  border-bottom: 2px solid #4a3826;
+}
+.kl-tab {
+  flex: 1 1 0;
+  background: transparent;
+  color: #cbbfa8;
+  border: none;
+  border-bottom: 4px solid transparent;
+  padding: 0.7rem 0.4rem;
+  font-size: 1.15rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+.kl-tab.on { color: #fdf6e9; border-bottom-color: var(--gold); }
+.kl-count {
+  display: inline-block;
+  min-width: 1.7rem;
+  background: #3a2c1e;
+  color: var(--gold-soft);
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+  font-size: 0.95rem;
+  font-weight: 900;
+}
+.kl-tab.on .kl-count { background: var(--gold); color: #3a2403; }
+
+.kl-list { display: flex; flex-direction: column; gap: 0.7rem; margin-top: 1rem; }
+.kl-row {
+  display: flex;
+  gap: 0.8rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  min-height: 64px;
+  background: #221a13;
+  border: 2px solid #4a3826;
+  border-radius: 14px;
+  padding: 0.8rem 1rem;
+  font-size: 1.05rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.kl-row:active { background: #2c2118; }
+.kl-row:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+.kl-row.is-new { border-color: var(--red-bright); }
+.kl-row.customer-here {
+  border-color: var(--gold);
+  animation: k-here-pulse 1.1s ease-in-out infinite;
+}
+.kl-row-main { min-width: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.kl-row-top { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+.kl-id { font-size: 1.5rem; font-weight: 900; }
+.kl-name {
+  font-size: 1.25rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 46vw;
+}
+.kl-row-sub { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; color: #cbbfa8; }
+.kl-row-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+.kl-total { font-size: 1.35rem; font-weight: 900; color: var(--gold-soft); }
+.kl-row-time { color: #cbbfa8; font-size: 0.95rem; }
+.kl-timer { font-variant-numeric: tabular-nums; font-weight: 800; font-size: 1.1rem; color: #e6cc76; }
+.kl-timer.late { color: #ff7a6b; }
+
+.kl-pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.15rem 0.7rem;
+  font-weight: 800;
+  font-size: 0.9rem;
+}
+.kl-pill.new { background: var(--red-bright); color: #fff; }
+.kl-pill.progress { background: #8a6d00; color: #ffedb0; }
+.kl-pill.ready { background: #14532d; color: #bbf7d0; }
+.kl-pill.unpaid { background: #57534e; color: #e7e5e4; }
+.kl-pill.cancelled { background: #451a1a; color: #fca5a5; }
+
+.kl-scheduled {
+  margin-top: 0.3rem;
+  background: #f59e0b;
+  color: #1a1207;
+  font-weight: 800;
+  border-radius: 8px;
+  padding: 0.25rem 0.6rem;
+  display: inline-block;
+}
+
+/* Detail view */
+.kl-back { margin-top: 1rem; }
+.kl-detail { margin-top: 1rem; font-size: 1.05rem; }
+.kl-detail-title { margin: 0 0 0.4rem; font-size: 1.7rem; }
+.kl-detail-status { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.kl-detail-time { color: #cbbfa8; }
+.kl-customer { margin-top: 0.8rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.kl-phone { color: var(--gold-soft); font-weight: 800; }
+.kl-detail-actions { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1.1rem; }
+.kl-ready-btn {
+  min-height: 72px;
+  font-size: 1.35rem;
+  font-weight: 900;
+  border-radius: 12px;
+  border: none;
+  background: #15803d;
+  color: #fff;
+  cursor: pointer;
+}
+.kl-ready-btn:active { filter: brightness(1.2); }
+.kl-reprint-btn {
+  min-height: 56px;
+  font-size: 1.1rem;
+  font-weight: 800;
+  border-radius: 10px;
+  background: #3a2c1e;
+  color: #e6cc76;
+  border: 2px solid var(--gold);
+  cursor: pointer;
+}
+.kl-reprint-btn:disabled { opacity: 0.55; cursor: default; }
+.kl-reprint-ok { color: #86efac; font-weight: 800; font-size: 1.05rem; }
+.kl-reprint-err { color: #fca5a5; font-weight: 700; font-size: 1.05rem; }
+.kl-done-note { color: #cbbfa8; font-weight: 700; font-size: 1.05rem; }
 
 /* ============================ TV DISPLAY ============================ */
 
