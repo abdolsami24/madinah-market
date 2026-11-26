@@ -18,12 +18,19 @@
 //   Kiosk, which blocks the browser print flow.
 // - The List | Board toggle in the header flips to the card board
 //   (rendered by KitchenHome); the choice persists in localStorage.
+// - Clearing comes in both sizes (owner, 2026-11-26): the header ⋮
+//   menu clears ALL on-screen orders at once, and each order can
+//   also be cleared on its own — a confirmed "🧹 Clear order" button
+//   in the detail view, plus a two-tap quick-clear on Ready rows.
+//   Both POST to the same /api/kitchen/clear route (all = every id,
+//   single = one id); cleared orders stay in Admin and reports.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { formatCents } from "@/lib/menu";
 import { formatDenverTime } from "@/lib/hours";
 import QrCode from "@/components/QrCode";
+import KitchenOptionsMenu from "@/components/KitchenOptionsMenu";
 import type { Session } from "@supabase/supabase-js";
 
 interface KitchenOrder {
@@ -136,6 +143,15 @@ export default function KitchenList({
   // button plus a brief disable window (one tap = one job).
   const [reprintNote, setReprintNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [reprintBusyUntil, setReprintBusyUntil] = useState(0);
+  // Per-order clear state: the detail view's confirm dialog, and the
+  // Ready rows' two-tap guard (armed id auto-disarms after ~3 s).
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [clearBusy, setClearBusy] = useState(false);
+  const [clearError, setClearError] = useState<string | null>(null);
+  const [armedClearId, setArmedClearId] = useState<number | null>(null);
+  const [rowClearBusyId, setRowClearBusyId] = useState<number | null>(null);
+  const [listMsg, setListMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const armTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seenPaidRef = useRef<Set<number>>(new Set());
   const freshRef = useRef<Set<number>>(new Set());
   const firstLoadRef = useRef(true);
@@ -163,6 +179,13 @@ export default function KitchenList({
   useEffect(() => {
     const t = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(t);
+  }, []);
+
+  // Never leave the quick-clear arm timer dangling after unmount.
+  useEffect(() => {
+    return () => {
+      if (armTimerRef.current) clearTimeout(armTimerRef.current);
+    };
   }, []);
 
   async function login(e: React.FormEvent) {
@@ -290,6 +313,82 @@ export default function KitchenList({
     }
   }
 
+  // ---- per-order clear -------------------------------------------------------
+  // One POST shape for both single-clear buttons: one id to the same
+  // /api/kitchen/clear route the ⋮ menu's clear-all uses with every
+  // id. Returns an error string (shown verbatim — including the
+  // friendly pre-SQL "not switched on yet" message, so a single
+  // clear fails soft in exactly the same way) or null on success.
+  async function clearOne(order: KitchenOrder): Promise<string | null> {
+    if (!session) return "Kitchen login required.";
+    try {
+      const res = await fetch("/api/kitchen/clear", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ order_ids: [order.id] }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+      };
+      if (!res.ok || !data.ok) {
+        return data.error ?? "Could not clear the order — try again.";
+      }
+      return null;
+    } catch {
+      return "Could not reach the server — try again.";
+    }
+  }
+
+  // Detail view: the confirm dialog's action. On success the detail
+  // closes and the list comes back on the same tab, order gone.
+  async function clearFromDetail(order: KitchenOrder) {
+    setClearBusy(true);
+    setClearError(null);
+    const err = await clearOne(order);
+    setClearBusy(false);
+    if (err) {
+      setClearError(err);
+      return;
+    }
+    setClearConfirmOpen(false);
+    setDetailId(null);
+    setOrders((prev) => prev.filter((o) => o.id !== order.id));
+    fetchOrders();
+  }
+
+  // Ready-row quick clear: first tap arms the button ("Sure?") for
+  // ~3 seconds, second tap clears — no modal, no accidental clears.
+  // Only Ready rows render this button; live orders are cleared from
+  // the detail view, deliberately.
+  function armOrClearRow(order: KitchenOrder) {
+    if (rowClearBusyId !== null) return;
+    if (armedClearId !== order.id) {
+      setArmedClearId(order.id);
+      if (armTimerRef.current) clearTimeout(armTimerRef.current);
+      armTimerRef.current = setTimeout(() => setArmedClearId(null), 3000);
+      return;
+    }
+    if (armTimerRef.current) clearTimeout(armTimerRef.current);
+    setArmedClearId(null);
+    setRowClearBusyId(order.id);
+    setListMsg(null);
+    void (async () => {
+      const err = await clearOne(order);
+      setRowClearBusyId(null);
+      if (err) {
+        setListMsg({ ok: false, text: err });
+        return;
+      }
+      setListMsg({ ok: true, text: `Order #${order.id} cleared ✓` });
+      setOrders((prev) => prev.filter((o) => o.id !== order.id));
+      fetchOrders();
+    })();
+  }
+
   function turnOnAlerts() {
     setAlertsOn(true);
     localStorage.setItem("madinah_alerts_on", "1");
@@ -365,6 +464,19 @@ export default function KitchenList({
             🔊 Turn on order alerts
           </button>
         )}
+        <KitchenOptionsMenu
+          accessToken={session.access_token}
+          orderIds={orders.map((o) => o.id)}
+          onCleared={() => {
+            // The server has stamped these orders 'cleared' and the
+            // feed no longer returns them — empty locally at once,
+            // close any open detail, then refetch to confirm.
+            setDetailId(null);
+            setClearConfirmOpen(false);
+            setOrders([]);
+            fetchOrders();
+          }}
+        />
       </div>
     </div>
   );
@@ -588,6 +700,52 @@ export default function KitchenList({
                     the order is paid.
                   </div>
                 )}
+                {detail.kitchen_status !== "cancelled" && (
+                  <button
+                    type="button"
+                    className="kl-clear-btn"
+                    onClick={() => {
+                      setClearError(null);
+                      setClearConfirmOpen(true);
+                    }}
+                  >
+                    🧹 Clear order — remove from this screen
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+          {clearConfirmOpen && detail && (
+            <div className="k-confirm-backdrop">
+              <div
+                className="k-confirm"
+                role="alertdialog"
+                aria-label={`Clear order #${detail.id}`}
+              >
+                <p className="k-confirm-title">Clear order #{detail.id}?</p>
+                <p>
+                  Remove this order from the kitchen screen? It stays in
+                  Admin and reports — nothing is deleted.
+                </p>
+                {clearError && <p className="k-confirm-err">{clearError}</p>}
+                <div className="k-confirm-actions">
+                  <button
+                    type="button"
+                    className="k-btn"
+                    disabled={clearBusy}
+                    onClick={() => setClearConfirmOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="k-btn warn"
+                    disabled={clearBusy}
+                    onClick={() => clearFromDetail(detail)}
+                  >
+                    {clearBusy ? "Clearing…" : "Clear order"}
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -638,12 +796,20 @@ export default function KitchenList({
               role="tab"
               aria-selected={tab === key}
               className={`kl-tab${tab === key ? " on" : ""}`}
-              onClick={() => setTab(key)}
+              onClick={() => {
+                setTab(key);
+                setArmedClearId(null);
+                setListMsg(null);
+              }}
             >
               {label} <span className="kl-count">{counts[key]}</span>
             </button>
           ))}
         </div>
+
+        {listMsg && (
+          <div className={`kl-list-msg ${listMsg.ok ? "ok" : "err"}`}>{listMsg.text}</div>
+        )}
 
         {shown.length === 0 && <p style={{ marginTop: "1.5rem" }}>{emptyText}</p>}
 
@@ -733,6 +899,24 @@ export default function KitchenList({
                     <span className={`kl-timer${late ? " late" : ""}`}>
                       ⏱ {formatElapsed(elapsedMs)}
                     </span>
+                  )}
+                  {tab === "ready" && (
+                    <button
+                      type="button"
+                      className={`kl-row-clear${armedClearId === o.id ? " armed" : ""}`}
+                      disabled={rowClearBusyId === o.id}
+                      aria-label={`Clear order #${o.id} from this screen`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        armOrClearRow(o);
+                      }}
+                    >
+                      {rowClearBusyId === o.id
+                        ? "Clearing…"
+                        : armedClearId === o.id
+                          ? "Sure?"
+                          : "🧹 Clear"}
+                    </button>
                   )}
                 </div>
               </div>

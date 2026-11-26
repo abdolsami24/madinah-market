@@ -23,6 +23,7 @@
 // - 80mm ticket printing, auto-print toggle.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import KitchenOptionsMenu from "@/components/KitchenOptionsMenu";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { formatCents } from "@/lib/menu";
 import { formatDenverTime } from "@/lib/hours";
@@ -375,6 +376,17 @@ export default function KitchenBoard({
               />
               Auto-print new orders
             </label>
+            <KitchenOptionsMenu
+              accessToken={session.access_token}
+              orderIds={orders.map((o) => o.id)}
+              onCleared={() => {
+                // Same contract as the list view: the feed no longer
+                // returns the cleared orders — empty locally at once,
+                // then refetch to confirm.
+                setOrders([]);
+                fetchOrders();
+              }}
+            />
           </div>
         </div>
 
