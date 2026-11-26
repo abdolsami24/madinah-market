@@ -2,7 +2,11 @@
 //
 // The database keeps the full legacy lifecycle in orders.kitchen_status
 // ('new' | 'accepted' | 'preparing' | 'ready' | 'completed' |
-// 'cancelled'), but the staff and customer UX has exactly two beats:
+// 'cancelled' — plus 'cleared', added 2026-11-26 for the kitchen
+// screen's GloriaFood-style Clear orders: the kitchen feed stops
+// returning the order, Admin shows it as "Cleared", and the row
+// itself is never deleted), but the staff and customer UX has
+// exactly two beats:
 //
 //   1. AUTO-ACCEPT — the moment an order is paid it is "Accepted"
 //      (markOrderPaid flips 'new' -> 'accepted'; no staff action).
@@ -92,6 +96,7 @@ export function adminStatusLabel(order: {
   kitchen_status: string;
 }): string {
   if (order.kitchen_status === "cancelled") return "Cancelled";
+  if (order.kitchen_status === "cleared") return "Cleared";
   if (order.kitchen_status === "completed") return "Completed";
   if (isPaidStatus(order.payment_status)) return "Accepted";
   return "New";
