@@ -57,14 +57,26 @@ export interface BridgeState {
   attempts: Record<string, number>;
   /** Id of the last test ticket the bridge finished (ok or not). */
   test_done_id: string | null;
+  /** Reprint request ids the bridge has finished (ok or not), most
+   * recent last, capped — the reprint twin of test_done_id. */
+  reprint_done_ids: string[];
   rescan_done_at: string | null;
   last_error: string | null;
+}
+
+/** One queued ticket reprint, requested from the kitchen list view. */
+export interface ReprintRequest {
+  id: string;
+  order_id: number;
+  requested_at: string;
 }
 
 export interface PrinterConfig {
   selected_printer: string | null;
   copies: number; // 1–3
   test_job: { id: string; requested_at: string } | null;
+  /** Queued ticket reprints (kitchen list view), oldest first. */
+  reprint_jobs: ReprintRequest[];
   rescan_requested_at: string | null;
   /**
    * Print ON/OFF switch (Admin → Operations). Missing = ON, so a
@@ -186,6 +198,8 @@ export const PAIRING_TTL_MS = 15 * 60 * 1000;
 export const CONNECTED_WITHIN_MS = 60 * 1000;
 export const MAX_PRINT_ATTEMPTS = 3;
 export const PRINTED_CAP = 300;
+export const REPRINT_DONE_CAP = 100;
+export const REPRINT_QUEUE_CAP = 20;
 export const TICKET_WIDTH = 48;
 const MAX_JOBS_PER_POLL = 20;
 
@@ -198,6 +212,7 @@ export const DEFAULT_BRIDGE_STATE: BridgeState = {
   printed_ids: [],
   attempts: {},
   test_done_id: null,
+  reprint_done_ids: [],
   rescan_done_at: null,
   last_error: null,
 };
@@ -206,6 +221,7 @@ export const DEFAULT_PRINTER_CONFIG: PrinterConfig = {
   selected_printer: null,
   copies: 1,
   test_job: null,
+  reprint_jobs: [],
   rescan_requested_at: null,
   enabled: true,
 };
@@ -259,6 +275,38 @@ export function testJobPending(state: BridgeState, config: PrinterConfig): boole
   return Boolean(config.test_job) && state.test_done_id !== config.test_job?.id;
 }
 
+/** Queued reprints the bridge has not finished yet, oldest first. */
+export function pendingReprints(
+  state: BridgeState,
+  config: PrinterConfig
+): ReprintRequest[] {
+  const done = new Set(state.reprint_done_ids);
+  return (config.reprint_jobs ?? []).filter((r) => !done.has(r.id));
+}
+
+/** Builds one order-ticket job (first print and reprint share this). */
+function orderTicketJob(
+  jobId: string,
+  order: TicketOrder,
+  config: PrinterConfig,
+  numbers: Record<string, string>
+): PrintJob {
+  // House Delivery only: the driver QR rides inside the job (the
+  // website encodes it; the app just draws the modules).
+  const driverUrl = driverUrlForOrder(order);
+  const qrMatrix = driverUrl ? encodeQr(driverUrl) : null;
+  return {
+    job_id: jobId,
+    kind: "order",
+    order_id: order.id,
+    printer: config.selected_printer,
+    copies: config.copies,
+    ticket: buildTicketText(order, numbers, driverUrl),
+    qr: qrMatrix ? { size: qrMatrix.size, data: qrModuleString(qrMatrix) } : null,
+    qr_url: driverUrl,
+  };
+}
+
 /**
  * The orders (already filtered to paid + not cancelled by the caller)
  * that the bridge should print now: after the pairing cutoff, not yet
@@ -279,15 +327,22 @@ export function pendingOrderJobs<T extends { id: number }>(
 /**
  * Composes one poll's job list (pure): the queued TEST ticket first —
  * it flows even while printing is OFF, so Test print always works —
- * then the pending order tickets, but ONLY when printing is enabled.
- * `orders` must already be filtered to paid + not cancelled.
+ * then the queued REPRINTS (kitchen list view), then the pending
+ * order tickets; reprints and order tickets flow ONLY when printing
+ * is enabled. `orders` must already be filtered to paid + not
+ * cancelled. `reprintOrders` holds the orders behind the queued
+ * reprint requests (fetched by id, WITHOUT the pairing cutoff — an
+ * order the cutoff skipped can still be reprinted); a request whose
+ * order is missing here (cancelled / unpaid since queueing) is
+ * skipped silently and simply never prints.
  */
 export function composeJobs(
   state: BridgeState,
   config: PrinterConfig,
   orders: TicketOrder[],
   numbers: Record<string, string>,
-  nowIso: string
+  nowIso: string,
+  reprintOrders: TicketOrder[] = []
 ): PrintJob[] {
   const jobs: PrintJob[] = [];
   if (testJobPending(state, config) && config.test_job) {
@@ -300,22 +355,14 @@ export function composeJobs(
     });
   }
   if (!config.enabled) return jobs;
+  const byId = new Map(reprintOrders.map((o) => [o.id, o]));
+  for (const req of pendingReprints(state, config)) {
+    const order = byId.get(req.order_id);
+    if (order) jobs.push(orderTicketJob(`reprint:${req.id}`, order, config, numbers));
+  }
   const pending = pendingOrderJobs(state, orders).slice(0, MAX_JOBS_PER_POLL);
   for (const order of pending) {
-    // House Delivery only: the driver QR rides inside the job (the
-    // website encodes it; the app just draws the modules).
-    const driverUrl = driverUrlForOrder(order);
-    const qrMatrix = driverUrl ? encodeQr(driverUrl) : null;
-    jobs.push({
-      job_id: `order:${order.id}`,
-      kind: "order",
-      order_id: order.id,
-      printer: config.selected_printer,
-      copies: config.copies,
-      ticket: buildTicketText(order, numbers, driverUrl),
-      qr: qrMatrix ? { size: qrMatrix.size, data: qrModuleString(qrMatrix) } : null,
-      qr_url: driverUrl,
-    });
+    jobs.push(orderTicketJob(`order:${order.id}`, order, config, numbers));
   }
   return jobs;
 }
@@ -340,7 +387,10 @@ export function cutoffAfterEnable(state: BridgeState, maxPaidOrderId: number): n
  */
 export function applyAck(
   state: BridgeState,
-  job: { kind: "order"; order_id: number } | { kind: "test"; test_id: string },
+  job:
+    | { kind: "order"; order_id: number }
+    | { kind: "test"; test_id: string }
+    | { kind: "reprint"; reprint_id: string },
   ok: boolean,
   error: string | null
 ): BridgeState {
@@ -348,10 +398,24 @@ export function applyAck(
     ...state,
     printed_ids: [...state.printed_ids],
     attempts: { ...state.attempts },
+    reprint_done_ids: [...state.reprint_done_ids],
   };
   const message = (error ?? "").trim().slice(0, 300) || "Print failed";
   if (job.kind === "test") {
     next.test_done_id = job.test_id;
+    next.last_error = ok ? null : message;
+    return next;
+  }
+  if (job.kind === "reprint") {
+    // One attempt per queueing, exactly like a test ticket: success
+    // OR failure completes the request (staff tap Reprint again for
+    // another try) and a failure is kept for the admin card.
+    if (!next.reprint_done_ids.includes(job.reprint_id)) {
+      next.reprint_done_ids.push(job.reprint_id);
+    }
+    if (next.reprint_done_ids.length > REPRINT_DONE_CAP) {
+      next.reprint_done_ids = next.reprint_done_ids.slice(-REPRINT_DONE_CAP);
+    }
     next.last_error = ok ? null : message;
     return next;
   }
@@ -418,6 +482,11 @@ export function normalizeState(raw: unknown): BridgeState {
           )
         : {},
     test_done_id: typeof r.test_done_id === "string" ? r.test_done_id : null,
+    reprint_done_ids: Array.isArray(r.reprint_done_ids)
+      ? r.reprint_done_ids
+          .filter((s): s is string => typeof s === "string" && s.length > 0)
+          .slice(-REPRINT_DONE_CAP)
+      : [],
     rescan_done_at: typeof r.rescan_done_at === "string" ? r.rescan_done_at : null,
     last_error: typeof r.last_error === "string" ? r.last_error : null,
   };
@@ -435,6 +504,26 @@ export function normalizeConfig(raw: unknown): PrinterConfig {
     r.test_job && typeof r.test_job === "object"
       ? (r.test_job as Record<string, unknown>)
       : null;
+  const reprintJobs: ReprintRequest[] = [];
+  if (Array.isArray(r.reprint_jobs)) {
+    for (const entry of r.reprint_jobs.slice(-REPRINT_QUEUE_CAP)) {
+      if (!entry || typeof entry !== "object") continue;
+      const e = entry as Record<string, unknown>;
+      const orderId =
+        typeof e.order_id === "number" && Number.isFinite(e.order_id)
+          ? Math.floor(e.order_id)
+          : 0;
+      if (typeof e.id !== "string" || !e.id || orderId <= 0) continue;
+      reprintJobs.push({
+        id: e.id,
+        order_id: orderId,
+        requested_at:
+          typeof e.requested_at === "string"
+            ? e.requested_at
+            : new Date(0).toISOString(),
+      });
+    }
+  }
   return {
     selected_printer:
       typeof r.selected_printer === "string" && r.selected_printer.trim()
@@ -451,6 +540,7 @@ export function normalizeConfig(raw: unknown): PrinterConfig {
                 : new Date(0).toISOString(),
           }
         : null,
+    reprint_jobs: reprintJobs,
     rescan_requested_at:
       typeof r.rescan_requested_at === "string" ? r.rescan_requested_at : null,
     // Only an explicit false turns printing off — anything else
@@ -770,7 +860,12 @@ export async function revokeBridge(): Promise<void> {
   await deleteKey(TOKEN_KEY);
   await deleteKey(PAIRING_KEY);
   await deleteKey(STATE_KEY);
-  await saveConfig({ ...store.config, test_job: null, rescan_requested_at: null });
+  await saveConfig({
+    ...store.config,
+    test_job: null,
+    reprint_jobs: [],
+    rescan_requested_at: null,
+  });
 }
 
 export async function selectPrinter(name: string | null): Promise<void> {
@@ -831,6 +926,40 @@ export async function queueTestPrint(): Promise<void> {
     ...store.config,
     test_job: { id, requested_at: new Date().toISOString() },
   });
+}
+
+/**
+ * Queues ONE ticket reprint for the bridge's next poll (kitchen list
+ * view → POST /api/kitchen/reprint). The ticket itself is composed by
+ * composeJobs from the orders table, byte-identical to the first
+ * print. Rules:
+ * - The print ON/OFF switch gates reprints exactly like first prints:
+ *   OFF → throw the message the kitchen screen shows verbatim.
+ * - One tap = one job: a still-queued reprint of the same order is
+ *   returned as-is instead of queueing a duplicate.
+ * - Finished requests are pruned from the stored queue here (their
+ *   ids live on in state.reprint_done_ids).
+ */
+export async function queueReprint(
+  orderId: number
+): Promise<{ id: string; already_queued: boolean }> {
+  const store = await getPrinterStore();
+  if (!store.config.enabled) {
+    throw new Error("Printer is off — turn it on in Admin → Operations");
+  }
+  const pending = pendingReprints(store.state, store.config);
+  const existing = pending.find((r) => r.order_id === orderId);
+  if (existing) return { id: existing.id, already_queued: true };
+  if (pending.length >= REPRINT_QUEUE_CAP) {
+    throw new Error("Too many reprints are queued — give the printer a moment.");
+  }
+  const req: ReprintRequest = {
+    id: randomBytes(6).toString("hex"),
+    order_id: orderId,
+    requested_at: new Date().toISOString(),
+  };
+  await saveConfig({ ...store.config, reprint_jobs: [...pending, req] });
+  return { id: req.id, already_queued: false };
 }
 
 // ---- Bridge side -----------------------------------------------------------------------
@@ -971,10 +1100,33 @@ export async function bridgeJobs(store: PrinterStore): Promise<PrintJob[]> {
     .limit(100);
   if (error) throw error;
   const orders = (data as TicketOrder[]) ?? [];
+  // Reprint orders are fetched by id WITHOUT the pairing cutoff: an
+  // order the cutoff skipped (e.g. paid during an OFF period) must
+  // still reprint. Same paid + not-cancelled guard as the main feed.
+  const reprintIds = [...new Set(pendingReprints(state, config).map((r) => r.order_id))];
+  let reprintOrders: TicketOrder[] = [];
+  if (config.enabled && reprintIds.length > 0) {
+    const { data: rData, error: rError } = await supabase
+      .from("orders")
+      .select("*")
+      .in("payment_status", ["paid", "test_paid"])
+      .neq("kitchen_status", "cancelled")
+      .in("id", reprintIds);
+    if (rError) throw rError;
+    reprintOrders = (rData as TicketOrder[]) ?? [];
+  }
   const needsNumbers =
-    config.enabled && pendingOrderJobs(state, orders).length > 0;
+    config.enabled &&
+    (pendingOrderJobs(state, orders).length > 0 || reprintOrders.length > 0);
   const numbers = needsNumbers ? await resolveMenuNumbers() : {};
-  return composeJobs(state, config, orders, numbers, new Date().toISOString());
+  return composeJobs(
+    state,
+    config,
+    orders,
+    numbers,
+    new Date().toISOString(),
+    reprintOrders
+  );
 }
 
 /** Records one print result. Exactly-once lives in applyAck. */
@@ -996,6 +1148,18 @@ export async function bridgeAck(
     // for an old test id is ignored rather than completing a new one.
     if (store.config.test_job && store.config.test_job.id === testId) {
       next = applyAck(store.state, { kind: "test", test_id: testId }, ok, error);
+    }
+  } else if (jobId.startsWith("reprint:")) {
+    const reprintId = jobId.slice("reprint:".length);
+    // Same stale-ack guard as test tickets: only a currently queued
+    // reprint request can be completed by an ack.
+    if ((store.config.reprint_jobs ?? []).some((r) => r.id === reprintId)) {
+      next = applyAck(
+        store.state,
+        { kind: "reprint", reprint_id: reprintId },
+        ok,
+        error
+      );
     }
   }
   if (next) await saveState(next);
