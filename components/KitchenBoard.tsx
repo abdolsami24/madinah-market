@@ -147,7 +147,17 @@ function printTicket(order: KitchenOrder) {
   win.document.close();
 }
 
-export default function KitchenBoard({ testMode }: { testMode: boolean }) {
+export default function KitchenBoard({
+  testMode,
+  view = "board",
+  onSwitchView,
+}: {
+  testMode: boolean;
+  /** List | Board toggle (KitchenHome) — optional so the board still
+   * renders standalone exactly as before when no switcher is passed. */
+  view?: "list" | "board";
+  onSwitchView?: () => void;
+}) {
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [email, setEmail] = useState("");
@@ -326,7 +336,29 @@ export default function KitchenBoard({ testMode }: { testMode: boolean }) {
       <div className="kitchen-wrap">
         <div className="kitchen-head">
           <h1>🍳 Kitchen — Madinah Market {testMode && <span style={{ color: "#fca5a5" }}>(TEST MODE)</span>}</h1>
-          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+            {onSwitchView && (
+              <div className="k-viewtoggle" role="group" aria-label="Kitchen view">
+                <button
+                  type="button"
+                  className={view === "list" ? "on" : ""}
+                  onClick={() => {
+                    if (view !== "list") onSwitchView();
+                  }}
+                >
+                  ☰ List
+                </button>
+                <button
+                  type="button"
+                  className={view === "board" ? "on" : ""}
+                  onClick={() => {
+                    if (view !== "board") onSwitchView();
+                  }}
+                >
+                  ▦ Board
+                </button>
+              </div>
+            )}
             {!alertsOn && (
               <button type="button" className="k-btn warn" onClick={turnOnAlerts}>
                 🔊 Turn on order alerts
