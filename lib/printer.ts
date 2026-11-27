@@ -32,7 +32,7 @@ import { createHash, randomBytes, randomInt, timingSafeEqual } from "crypto";
 import { getServiceClient } from "./supabase/server";
 import { formatCents, MENU_BY_ID } from "./menu";
 import { getPricingMenuById } from "./menuDb";
-import { formatDenverTime } from "./hours";
+import { formatDenverTime, isNextDaySchedule } from "./hours";
 import { encodeQr, qrModuleString } from "./qrcode";
 import { siteUrl } from "./stripe";
 
@@ -647,15 +647,17 @@ export function buildTicketText(
     // small line — a plain-text ticket has a single font size, so caps,
     // stars and full-width rules are what draw the kitchen's eye to it.
     // (This one line serves every fulfillment; delivery orders say
-    // DELIVERY LATER, pickup/curbside say PICKUP LATER.)
+    // DELIVERY LATER, pickup/curbside say PICKUP LATER.) One-day-ahead
+    // orders (placed today, pickup tomorrow) say TOMORROW + the time on
+    // the second line, keyed to the order's creation date so reprints
+    // read the same as the first print. The big first line never
+    // changes — the printer app's big-print rule keys on it.
     const laterWord =
       order.fulfillment === "delivery" ? "DELIVERY LATER" : "PICKUP LATER";
-    lines.push(
-      rule,
-      center(`*** ${laterWord} ***`),
-      center(`*** AT ${formatDenverTime(order.scheduled_for)} ***`),
-      rule
-    );
+    const whenLine = isNextDaySchedule(order.scheduled_for, order.created_at)
+      ? `*** TOMORROW ${formatDenverTime(order.scheduled_for)} ***`
+      : `*** AT ${formatDenverTime(order.scheduled_for)} ***`;
+    lines.push(rule, center(`*** ${laterWord} ***`), center(whenLine), rule);
   }
   lines.push(dash);
   if (order.customer_name?.trim()) lines.push(...wrap(`Customer: ${order.customer_name.trim()}`));

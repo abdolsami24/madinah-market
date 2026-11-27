@@ -201,22 +201,47 @@ export function pickupWindowToday(
   return pickupWindows(config)[denverParts(now).dayIndex];
 }
 
+/**
+ * The Denver calendar date `days` after today's Denver date (pure
+ * calendar math on the YYYY-MM-DD — no DST traps). Only `ymd` and
+ * `dayIndex` are meaningful in the result; `minutes` is 0.
+ */
+export function denverDatePlusDays(now: Date, days: number): DenverParts {
+  const { ymd } = denverParts(now);
+  const [y, mo, d] = ymd.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, mo - 1, d + days));
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return {
+    dayIndex: dt.getUTCDay(),
+    minutes: 0,
+    ymd: `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`,
+  };
+}
+
+/** The pickup window for today (offset 0) or tomorrow (offset 1). */
+export function pickupWindowOn(
+  now = new Date(),
+  config: HoursConfig = DEFAULT_HOURS_CONFIG,
+  offsetDays = 0
+): DayWindow {
+  return pickupWindows(config)[denverDatePlusDays(now, offsetDays).dayIndex];
+}
+
 /** "HH:MM" (Denver wall time today) -> "10:00" style input value. */
 export function minutesToInputValue(mins: number): string {
   return `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
 }
 
 /**
- * Converts a Denver wall-clock time ("HH:MM") on Denver's current date
- * into an absolute ISO timestamp.
+ * Converts a Denver wall-clock time ("HH:MM") on the given Denver
+ * calendar date ("YYYY-MM-DD") into an absolute ISO timestamp.
  */
-export function denverTimeTodayToISO(hhmm: string, now = new Date()): string | null {
+export function denverTimeOnDateToISO(hhmm: string, ymd: string): string | null {
   const match = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
   if (!match) return null;
   const hh = Number(match[1]);
   const mm = Number(match[2]);
   if (hh > 23 || mm > 59) return null;
-  const { ymd } = denverParts(now);
   const [y, mo, d] = ymd.split("-").map(Number);
   // Start with the wall time read as UTC, then correct by the real Denver
   // offset at that moment (two passes settle DST edges).
@@ -237,8 +262,17 @@ export function denverTimeTodayToISO(hhmm: string, now = new Date()): string | n
 }
 
 /**
- * Validates a scheduled pickup time (spec: today only, inside pickup
- * hours, at least ~10 minutes from now). Returns an error message or null.
+ * Converts a Denver wall-clock time ("HH:MM") on Denver's current date
+ * into an absolute ISO timestamp.
+ */
+export function denverTimeTodayToISO(hhmm: string, now = new Date()): string | null {
+  return denverTimeOnDateToISO(hhmm, denverParts(now).ymd);
+}
+
+/**
+ * Validates a scheduled pickup time (spec: today or tomorrow — one day
+ * ahead — inside the chosen day's pickup hours, at least ~10 minutes
+ * from now). Returns an error message or null.
  */
 export function validatePickupTime(
   iso: string,
@@ -249,15 +283,18 @@ export function validatePickupTime(
   if (Number.isNaN(when.getTime())) return "Please choose a pickup time.";
   const want = denverParts(when);
   const today = denverParts(now);
-  if (want.ymd !== today.ymd) {
-    return "Scheduled pickup is for today only — please pick a time today.";
+  const tomorrow = denverDatePlusDays(now, 1);
+  const dayLabel =
+    want.ymd === today.ymd ? "today" : want.ymd === tomorrow.ymd ? "tomorrow" : null;
+  if (!dayLabel) {
+    return "Scheduled pickup can be today or tomorrow only — please pick a time today or tomorrow.";
   }
   if (when.getTime() < now.getTime() + 10 * 60000) {
     return "Please pick a pickup time at least 10 minutes from now.";
   }
   const win = pickupWindows(config)[want.dayIndex];
   if (want.minutes < win.open || want.minutes > win.close) {
-    return `Pickup hours today are ${formatWindow(win)} — please pick a time inside them.`;
+    return `Pickup hours ${dayLabel} are ${formatWindow(win)} — please pick a time inside them.`;
   }
   return null;
 }
@@ -269,4 +306,51 @@ export function formatDenverTime(iso: string): string {
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(iso));
+}
+
+/**
+ * True when the scheduled Denver date is the day AFTER the order's own
+ * Denver creation date — i.e. the order was placed for "tomorrow".
+ * Ticket composers key off this (not off the print moment) so a ticket
+ * reprinted on the pickup morning still says the same thing it said
+ * when the order was placed.
+ */
+export function isNextDaySchedule(scheduledIso: string, createdIso: string): boolean {
+  const created = new Date(createdIso);
+  if (Number.isNaN(created.getTime())) return false;
+  return denverParts(new Date(scheduledIso)).ymd === denverDatePlusDays(created, 1).ymd;
+}
+
+/**
+ * The ⏰ banner for the kitchen screens, relative to NOW: an order whose
+ * pickup falls on tomorrow's Denver date reads "⏰ TOMORROW — pickup
+ * 11:00 AM"; anything else keeps the plain "⏰ PICKUP AT 7:28 PM".
+ */
+export function kitchenScheduledLabel(iso: string, now = new Date()): string {
+  const time = formatDenverTime(iso);
+  if (denverParts(new Date(iso)).ymd === denverDatePlusDays(now, 1).ymd) {
+    return `⏰ TOMORROW — pickup ${time}`;
+  }
+  return `⏰ PICKUP AT ${time}`;
+}
+
+/**
+ * Customer-facing scheduled-pickup label: "Today at 7:28 PM",
+ * "Tomorrow, Fri Nov 27 · 11:00 AM", or "Fri, Dec 5 · 11:00 AM" for
+ * anything further out (defensive — validation only allows +1 day).
+ */
+export function formatPickupWhenLabel(iso: string, now = new Date()): string {
+  const when = new Date(iso);
+  const time = formatDenverTime(iso);
+  if (denverParts(when).ymd === denverParts(now).ymd) return `Today at ${time}`;
+  const dateLabel = new Intl.DateTimeFormat("en-US", {
+    timeZone: RESTAURANT_TZ,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(when);
+  if (denverParts(when).ymd === denverDatePlusDays(now, 1).ymd) {
+    return `Tomorrow, ${dateLabel} · ${time}`;
+  }
+  return `${dateLabel} · ${time}`;
 }
