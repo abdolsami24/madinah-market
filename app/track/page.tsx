@@ -20,6 +20,7 @@ import {
   deliveryIsFailed,
 } from "@/lib/deliveryStatus";
 import { LAST_ORDER_KEY, resolveTrackAutoLookup } from "@/lib/lastOrder";
+import { formatPickupWhenLabel } from "@/lib/hours";
 
 interface TrackedOrder {
   id: number;
@@ -43,6 +44,8 @@ interface TrackedOrder {
   /** Curbside only: the car text + the "I'm here" arrival time. */
   car_description?: string | null;
   customer_here_at?: string | null;
+  /** Scheduled pickup ISO ("for later", incl. tomorrow); null = ASAP. */
+  scheduled_for?: string | null;
   payment_status: string;
   kitchen_status: string;
   shipday_status: string | null;
@@ -224,6 +227,11 @@ export default function TrackPage() {
                   ? "🚗 Curbside"
                   : "🏃 Pickup"}
             </h3>
+            {order.scheduled_for && (
+              <p style={{ marginTop: "0.25rem" }}>
+                ⏰ Scheduled pickup: <strong>{formatPickupWhenLabel(order.scheduled_for)}</strong>
+              </p>
+            )}
             {order.kitchen_status === "cancelled" ? (
               <p className="form-error">This order was cancelled. Please call us: 720-763-0786.</p>
             ) : (
