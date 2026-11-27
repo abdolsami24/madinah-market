@@ -88,7 +88,9 @@ export async function POST(req: Request) {
     return bad("Delivery ordering is currently off. Please choose pickup or call us.", 400);
   }
 
-  // Scheduled pickup ("pickup for later"): today only, inside pickup hours.
+  // Scheduled pickup ("pickup for later"): today or tomorrow (one day
+  // ahead), inside the chosen day's pickup hours — validatePickupTime
+  // in lib/hours.ts holds the exact rules.
   let scheduled_for: string | null = null;
   if (fulfillment === "pickup" && typeof body.scheduled_for === "string" && body.scheduled_for) {
     const problem = validatePickupTime(body.scheduled_for, new Date(), await getHoursConfig());
