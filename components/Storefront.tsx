@@ -43,9 +43,10 @@ import {
   pickupWindows,
   deliveryWindows,
   formatWindow,
-  pickupWindowToday,
   denverParts,
-  denverTimeTodayToISO,
+  denverDatePlusDays,
+  denverTimeOnDateToISO,
+  formatPickupWhenLabel,
   validatePickupTime,
   minutesToInputValue,
   type HoursConfig,
@@ -167,6 +168,8 @@ export default function Storefront({
     fulfillment: Fulfillment;
     phone: string;
     car: string;
+    /** Scheduled pickup ISO ("" for ASAP) — the banner's ⏰ line. */
+    scheduled_for: string;
   } | null>(null);
   const [qrSource, setQrSource] = useState(false);
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
@@ -191,8 +194,9 @@ export default function Storefront({
   // Admin-controlled site state (switches, sold-out dishes, promotions,
   // uploaded photos). Defaults keep the site fully open until loaded.
   const [siteState, setSiteState] = useState<SiteState | null>(null);
-  // Scheduled pickup.
+  // Scheduled pickup: ASAP, or a chosen time today / tomorrow.
   const [pickupWhen, setPickupWhen] = useState<"asap" | "later">("asap");
+  const [pickupDay, setPickupDay] = useState<"today" | "tomorrow">("today");
   const [pickupTime, setPickupTime] = useState("");
   const feeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const feeSeq = useRef(0);
@@ -219,6 +223,7 @@ export default function Storefront({
             fulfillment?: Fulfillment;
             phone?: string;
             car?: string;
+            scheduled_for?: string;
           };
           if (saved.id === orderParam && saved.fulfillment && saved.phone) {
             setLastOrder({
@@ -226,6 +231,7 @@ export default function Storefront({
               fulfillment: saved.fulfillment,
               phone: saved.phone,
               car: saved.car ?? "",
+              scheduled_for: saved.scheduled_for ?? "",
             });
           }
         }
@@ -338,6 +344,18 @@ export default function Storefront({
   // site state loads or if the server does not send them).
   const hoursCfg = siteState?.hours ?? DEFAULT_HOURS_CONFIG;
   const pickupWins = siteState?.hours ? pickupWindows(hoursCfg) : PICKUP_HOURS;
+  // The pickup window of the scheduled-pickup day choice (today's or
+  // tomorrow's weekday window — e.g. Sunday's shorter hours tomorrow).
+  const pickupDayWin =
+    pickupWins[denverDatePlusDays(new Date(), pickupDay === "tomorrow" ? 1 : 0).dayIndex];
+
+  // The scheduled-pickup ISO for the current day/time choice: the
+  // picked Denver wall time on today's or tomorrow's Denver date.
+  function buildScheduledIso(): string | null {
+    if (!pickupTime) return null;
+    const ymd = denverDatePlusDays(new Date(), pickupDay === "tomorrow" ? 1 : 0).ymd;
+    return denverTimeOnDateToISO(pickupTime, ymd);
+  }
   const deliveryWins = siteState?.hours ? deliveryWindows(hoursCfg) : DELIVERY_HOURS;
 
   // If the admin turned the selected fulfillment type off, switch over.
@@ -854,7 +872,7 @@ export default function Storefront({
       return setError("Please tell us your car (color & type) so we can find you outside.");
     }
     if (fulfillment === "pickup" && pickupWhen === "later") {
-      const iso = pickupTime ? denverTimeTodayToISO(pickupTime) : null;
+      const iso = buildScheduledIso();
       if (!iso) return setError("Please choose a pickup time.");
       const problem = validatePickupTime(iso, new Date(), hoursCfg);
       if (problem) return setError(problem);
@@ -886,7 +904,7 @@ export default function Storefront({
     // Scheduled pickup ("pickup for later") — validated again on the server.
     let scheduledFor: string | undefined;
     if (fulfillment === "pickup" && pickupWhen === "later") {
-      const iso = pickupTime ? denverTimeTodayToISO(pickupTime) : null;
+      const iso = buildScheduledIso();
       if (!iso) return setError("Please choose a pickup time.");
       const problem = validatePickupTime(iso, new Date(), hoursCfg);
       if (problem) return setError(problem);
@@ -960,6 +978,7 @@ export default function Storefront({
         fulfillment,
         phone: phone.trim(),
         car: fulfillment === "curbside" ? car.trim() : "",
+        scheduled_for: scheduledFor ?? "",
       };
       setLastOrder(placed);
       try {
@@ -1132,6 +1151,8 @@ export default function Storefront({
 
   // Review-screen summary rows (reference-site style): what was chosen
   // in Details, each with an Edit jump back to the details screen.
+  const reviewScheduledIso =
+    fulfillment === "pickup" && pickupWhen === "later" ? buildScheduledIso() : null;
   const reviewSummaryJsx = (
     <div className="review-summary">
       <div className="review-row">
@@ -1158,7 +1179,11 @@ export default function Storefront({
       <div className="review-row">
         <div>
           <strong>
-            🕙 {pickupWhen === "later" ? `Today at ${pickupTime}` : "As soon as possible"}
+            🕙 {pickupWhen === "later"
+              ? reviewScheduledIso
+                ? formatPickupWhenLabel(reviewScheduledIso)
+                : "Choose a time"
+              : "As soon as possible"}
           </strong>
           <span>{fulfillment === "delivery" ? "Delivery time" : "Pickup time"}</span>
         </div>
@@ -1272,6 +1297,12 @@ export default function Storefront({
         {successOrder !== null && (
           <div className="success-banner">
             ✅ <strong>Order #{successOrder} received!</strong> Thank you — we are on it.
+            {lastOrder?.id === successOrder && lastOrder.scheduled_for && (
+              <>
+                <br />
+                ⏰ Pickup: <strong>{formatPickupWhenLabel(lastOrder.scheduled_for)}</strong>
+              </>
+            )}
             <br />
             <Link href={`/track?order=${successOrder}`}>Track your order →</Link>
             {lastOrder?.id === successOrder && lastOrder.fulfillment === "curbside" && (
@@ -1639,21 +1670,40 @@ export default function Storefront({
                     className={pickupWhen === "later" ? "active" : ""}
                     onClick={() => setPickupWhen("later")}
                   >
-                    ⏰ Later today
+                    ⏰ Schedule for later
                   </button>
                 </div>
                 {pickupWhen === "later" && (
                   <>
+                    <div className="toggle-row">
+                      <button
+                        type="button"
+                        className={pickupDay === "today" ? "active" : ""}
+                        onClick={() => setPickupDay("today")}
+                      >
+                        Today
+                      </button>
+                      <button
+                        type="button"
+                        className={pickupDay === "tomorrow" ? "active" : ""}
+                        onClick={() => setPickupDay("tomorrow")}
+                      >
+                        Tomorrow
+                      </button>
+                    </div>
                     <input
                       type="time"
                       value={pickupTime}
-                      min={minutesToInputValue(pickupWindowToday(new Date(), hoursCfg).open)}
-                      max={minutesToInputValue(pickupWindowToday(new Date(), hoursCfg).close)}
+                      min={minutesToInputValue(pickupDayWin.open)}
+                      max={minutesToInputValue(pickupDayWin.close)}
                       onChange={(e) => setPickupTime(e.target.value)}
                     />
                     <div className="fee-msg">
-                      Pick any time today inside pickup hours (
-                      {formatWindow(pickupWindowToday(new Date(), hoursCfg))}) — e.g. in 2 or 3 hours.
+                      Pick any time {pickupDay} inside pickup hours (
+                      {formatWindow(pickupDayWin)})
+                      {pickupDay === "today"
+                        ? " — e.g. in 2 or 3 hours."
+                        : " — order today, pick up tomorrow."}
                     </div>
                   </>
                 )}

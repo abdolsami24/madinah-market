@@ -6,8 +6,8 @@
 //   access token; a Supabase Realtime subscription triggers instant
 //   refetches as a bonus (polling is the guaranteed path).
 // - New paid order => the card simply appears on the board and ONE
-//   single "ding" sound plays, once. No voice, no repeating alarm,
-//   no banner to tap (owner's request, 2026-11-18).
+//   soft two-note chime plays, once. No voice, no repeating alarm,
+//   no banner to tap (owner's request, 2026-11-18; chime 2026-11-26).
 // - ONE-TAP FLOW (owner's design, 2026-11-18): paid orders arrive
 //   already "Accepted" (auto-accept at payment — there are NO status
 //   step buttons). The chef taps the TOP of the card when the food is
@@ -26,7 +26,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import KitchenOptionsMenu from "@/components/KitchenOptionsMenu";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { formatCents } from "@/lib/menu";
-import { formatDenverTime } from "@/lib/hours";
+import { formatDenverTime, isNextDaySchedule, kitchenScheduledLabel } from "@/lib/hours";
 import QrCode from "@/components/QrCode";
 import type { Session } from "@supabase/supabase-js";
 
@@ -77,22 +77,33 @@ function isActive(o: KitchenOrder): boolean {
   return o.kitchen_status !== "completed" && o.kitchen_status !== "cancelled";
 }
 
-// One single "ding" — played exactly once when a new order arrives.
+// A soft two-note chime (E6 → C6) — played exactly once when a new
+// order arrives. Generated in code with WebAudio; no audio files.
 function chime() {
   try {
     const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const ctx = new Ctx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = "sine";
-    osc.frequency.value = 880;
-    osc.connect(gain);
-    gain.connect(ctx.destination);
     const start = ctx.currentTime;
-    osc.start(start);
-    gain.gain.setValueAtTime(0.3, start);
-    gain.gain.exponentialRampToValueAtTime(0.001, start + 0.9);
-    osc.stop(start + 0.95);
+    // Two gentle sine notes in sequence, each with a quick attack and
+    // a soft decay — a chime, not an alarm.
+    const notes: [number, number][] = [
+      [1318.51, 0], // E6
+      [1046.5, 0.18], // C6
+    ];
+    for (const [freq, offset] of notes) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      const t = start + offset;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+      osc.start(t);
+      osc.stop(t + 0.5);
+    }
   } catch {
     /* audio is best-effort */
   }
@@ -130,7 +141,7 @@ function printTicket(order: KitchenOrder) {
     <div class="c">MADINAH BAKERY & KABOB</div>
     <h1>#${order.id}</h1>
     <div class="c">${order.fulfillment.toUpperCase()} · ${new Date(order.created_at).toLocaleString()}</div>
-    ${order.scheduled_for ? `<div class="c" style="border:3px solid #000;padding:2mm;margin:2mm 0;font-weight:bold"><div style="font-size:22px">⏰ ${order.fulfillment === "delivery" ? "DELIVERY" : "PICKUP"} LATER</div><div style="font-size:22px">AT ${formatDenverTime(order.scheduled_for)}</div></div>` : ""}
+    ${order.scheduled_for ? `<div class="c" style="border:3px solid #000;padding:2mm;margin:2mm 0;font-weight:bold"><div style="font-size:22px">⏰ ${order.fulfillment === "delivery" ? "DELIVERY" : "PICKUP"} LATER</div><div style="font-size:22px">${isNextDaySchedule(order.scheduled_for, order.created_at) ? `TOMORROW ${formatDenverTime(order.scheduled_for)}` : `AT ${formatDenverTime(order.scheduled_for)}`}</div></div>` : ""}
     <hr/>
     <div>${order.customer_name ?? ""} · ${order.customer_phone ?? ""}</div>
     ${order.fulfillment === "delivery" ? `<div><strong>DELIVERY:</strong> ${order.delivery_address ?? ""}</div>` : ""}
@@ -214,7 +225,7 @@ export default function KitchenBoard({
       const list = data.orders ?? [];
 
       // New-arrival handling for newly seen PAID orders: auto-print
-      // (if enabled) + ONE single ding. The order card itself simply
+      // (if enabled) + ONE soft chime. The order card itself simply
       // appears in the grid below — nothing to tap, nothing to stop.
       const fresh = list.filter((o) => isPaid(o) && !seenPaidRef.current.has(o.id));
       for (const o of list) {
@@ -284,7 +295,7 @@ export default function KitchenBoard({
   function turnOnAlerts() {
     setAlertsOn(true);
     localStorage.setItem("madinah_alerts_on", "1");
-    // Playing the ding inside this tap unlocks audio for later
+    // Playing the chime inside this tap unlocks audio for later
     // arrivals (browsers block sound before the first interaction).
     chime();
   }
@@ -482,7 +493,7 @@ export default function KitchenBoard({
                         display: "inline-block",
                       }}
                     >
-                      ⏰ PICKUP AT {formatDenverTime(o.scheduled_for)}
+                      {kitchenScheduledLabel(o.scheduled_for)}
                     </div>
                   )}
                   <div className="k-hint">👆 Tap here when the food is ready</div>

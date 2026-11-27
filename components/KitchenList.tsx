@@ -7,7 +7,7 @@
 //
 // It deliberately mirrors KitchenBoard's plumbing — the same Supabase
 // Auth login gate, the same GET /api/kitchen/orders feed (5 s poll +
-// realtime bonus), the same single ding + fresh highlight for newly
+// realtime bonus), the same soft chime + fresh highlight for newly
 // seen paid orders, the same POST /api/kitchen/status completion —
 // so the two faces can never disagree about an order. Differences
 // from the board, by design:
@@ -28,7 +28,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { formatCents } from "@/lib/menu";
-import { formatDenverTime } from "@/lib/hours";
+import { kitchenScheduledLabel } from "@/lib/hours";
 import QrCode from "@/components/QrCode";
 import KitchenOptionsMenu from "@/components/KitchenOptionsMenu";
 import type { Session } from "@supabase/supabase-js";
@@ -98,23 +98,34 @@ function formatElapsed(ms: number): string {
   return `${m}:${ss}`;
 }
 
-// One single "ding" — played exactly once when a new order arrives
-// (identical to the board's).
+// A soft two-note chime (E6 → C6) — played exactly once when a new
+// order arrives (identical to the board's). Generated in code with
+// WebAudio; no audio files.
 function chime() {
   try {
     const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const ctx = new Ctx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = "sine";
-    osc.frequency.value = 880;
-    osc.connect(gain);
-    gain.connect(ctx.destination);
     const start = ctx.currentTime;
-    osc.start(start);
-    gain.gain.setValueAtTime(0.3, start);
-    gain.gain.exponentialRampToValueAtTime(0.001, start + 0.9);
-    osc.stop(start + 0.95);
+    // Two gentle sine notes in sequence, each with a quick attack and
+    // a soft decay — a chime, not an alarm.
+    const notes: [number, number][] = [
+      [1318.51, 0], // E6
+      [1046.5, 0.18], // C6
+    ];
+    for (const [freq, offset] of notes) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      const t = start + offset;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+      osc.start(t);
+      osc.stop(t + 0.5);
+    }
   } catch {
     /* audio is best-effort */
   }
@@ -544,7 +555,7 @@ export default function KitchenList({
               </div>
               {detail.scheduled_for && (
                 <div className="kl-scheduled">
-                  ⏰ PICKUP AT {formatDenverTime(detail.scheduled_for)}
+                  {kitchenScheduledLabel(detail.scheduled_for)}
                 </div>
               )}
               <div className="kl-customer">
@@ -885,7 +896,7 @@ export default function KitchenList({
                   )}
                   {o.scheduled_for && (
                     <div className="kl-scheduled">
-                      ⏰ PICKUP AT {formatDenverTime(o.scheduled_for)}
+                      {kitchenScheduledLabel(o.scheduled_for)}
                     </div>
                   )}
                 </div>
