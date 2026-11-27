@@ -643,7 +643,19 @@ export function buildTicketText(
   );
   lines.push(center(denverDateTime(order.created_at)));
   if (order.scheduled_for) {
-    lines.push(center(`** PICKUP AT ${formatDenverTime(order.scheduled_for)} **`));
+    // Scheduled ("for later") orders get a boxed banner instead of one
+    // small line — a plain-text ticket has a single font size, so caps,
+    // stars and full-width rules are what draw the kitchen's eye to it.
+    // (This one line serves every fulfillment; delivery orders say
+    // DELIVERY LATER, pickup/curbside say PICKUP LATER.)
+    const laterWord =
+      order.fulfillment === "delivery" ? "DELIVERY LATER" : "PICKUP LATER";
+    lines.push(
+      rule,
+      center(`*** ${laterWord} ***`),
+      center(`*** AT ${formatDenverTime(order.scheduled_for)} ***`),
+      rule
+    );
   }
   lines.push(dash);
   if (order.customer_name?.trim()) lines.push(...wrap(`Customer: ${order.customer_name.trim()}`));
