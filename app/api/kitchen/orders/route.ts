@@ -20,11 +20,18 @@ export async function GET(req: Request) {
   }
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
+  const startIso = startOfDay.toISOString();
   const supabase = getServiceClient();
   const { data, error } = await supabase
     .from("orders")
     .select("*")
-    .gte("created_at", startOfDay.toISOString())
+    // Today, by creation — PLUS anything scheduled for today or later.
+    // One-day-ahead pickup (2026-11-26): a tomorrow order is created
+    // today, so the created_at branch shows it right away; on its
+    // pickup morning it was created *yesterday*, so the scheduled_for
+    // branch is what keeps it on the board. Past orders satisfy
+    // neither branch and drop off as before.
+    .or(`created_at.gte.${startIso},scheduled_for.gte.${startIso}`)
     // "Clear orders" (2026-11-26): orders staff cleared from the
     // kitchen screen (POST /api/kitchen/clear) never come back into
     // the feed — on any device, after any reload. The rows themselves
