@@ -25,6 +25,11 @@ export async function GET(req: Request) {
     .from("orders")
     .select("*")
     .gte("created_at", startOfDay.toISOString())
+    // "Clear orders" (2026-11-26): orders staff cleared from the
+    // kitchen screen (POST /api/kitchen/clear) never come back into
+    // the feed — on any device, after any reload. The rows themselves
+    // stay in the database for Admin and reports.
+    .neq("kitchen_status", "cleared")
     .order("created_at", { ascending: false })
     .limit(100);
   if (error) {
