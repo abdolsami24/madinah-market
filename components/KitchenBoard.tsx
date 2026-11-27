@@ -130,7 +130,7 @@ function printTicket(order: KitchenOrder) {
     <div class="c">MADINAH BAKERY & KABOB</div>
     <h1>#${order.id}</h1>
     <div class="c">${order.fulfillment.toUpperCase()} · ${new Date(order.created_at).toLocaleString()}</div>
-    ${order.scheduled_for ? `<div class="c" style="font-size:20px;font-weight:bold">⏰ PICKUP AT ${formatDenverTime(order.scheduled_for)}</div>` : ""}
+    ${order.scheduled_for ? `<div class="c" style="border:3px solid #000;padding:2mm;margin:2mm 0;font-weight:bold"><div style="font-size:22px">⏰ ${order.fulfillment === "delivery" ? "DELIVERY" : "PICKUP"} LATER</div><div style="font-size:22px">AT ${formatDenverTime(order.scheduled_for)}</div></div>` : ""}
     <hr/>
     <div>${order.customer_name ?? ""} · ${order.customer_phone ?? ""}</div>
     ${order.fulfillment === "delivery" ? `<div><strong>DELIVERY:</strong> ${order.delivery_address ?? ""}</div>` : ""}
