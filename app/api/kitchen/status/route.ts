@@ -8,6 +8,12 @@
 // old client or a database row mid-migration can never wedge the
 // board, and the pickup-ready SMS rule (lib/kitchenStatus) fires the
 // text exactly once, on the first transition into ready/completed.
+//
+// "cleared" (2026-11-26) is the kitchen screen's Clear-orders stamp:
+// accepted here so the value flows through the same status machinery
+// (the bulk action itself lives in POST /api/kitchen/clear). It has
+// no side effects in this route — it is neither a ready/completed
+// transition (no SMS) nor a cancellation (no points reversal).
 
 import { NextResponse } from "next/server";
 import { getServiceClient, supabaseConfigured, verifyKitchenUser } from "@/lib/supabase/server";
@@ -18,7 +24,7 @@ import { logAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
-const ALLOWED = ["new", "accepted", "preparing", "ready", "completed", "cancelled"];
+const ALLOWED = ["new", "accepted", "preparing", "ready", "completed", "cancelled", "cleared"];
 
 export async function POST(req: Request) {
   if (!supabaseConfigured()) {
