@@ -20,7 +20,7 @@ create table if not exists public.orders (
   payment_status text not null default 'unpaid'
     check (payment_status in ('unpaid', 'paid', 'test_paid')),
   kitchen_status text not null default 'new'
-    check (kitchen_status in ('new', 'accepted', 'preparing', 'ready', 'completed', 'cancelled')),
+    check (kitchen_status in ('new', 'accepted', 'preparing', 'ready', 'completed', 'cancelled', 'cleared')),
   stripe_session_id text,
   shipday_order_id text,
   shipday_status text,
