@@ -43,7 +43,10 @@ export async function POST(req: Request) {
   // Live tracking (2026-11-23): DoorDash live-map URL + the house
   // driver's latest GPS fix — until live-tracking-schema.sql runs,
   // this select errors and the chain below falls back a tier.
-  const liveCols = `${curbsideCols}, delivery_tracking_url, driver_lat, driver_lng, driver_loc_at`;
+  // scheduled_for rides the top tier too (column added by
+  // admin-schema.sql); on a fallback tier it reads as null and the
+  // track page simply shows no ⏰ line.
+  const liveCols = `${curbsideCols}, delivery_tracking_url, driver_lat, driver_lng, driver_loc_at, scheduled_for`;
   let { data: order } = await supabase
     .from("orders")
     .select(liveCols)
@@ -89,6 +92,7 @@ export async function POST(req: Request) {
     driver_lat?: number | null;
     driver_lng?: number | null;
     driver_loc_at?: string | null;
+    scheduled_for?: string | null;
   }) | null;
 
   if (!full || last10(String(full.customer_phone ?? "")) !== last10(phone)) {
@@ -115,6 +119,10 @@ export async function POST(req: Request) {
       // "I'm here" yet (drives the button on the tracking page).
       car_description: full.fulfillment === "curbside" ? (full.car_description ?? null) : null,
       customer_here_at: full.customer_here_at ?? null,
+      // Scheduled pickup ("for later", incl. one day ahead): the track
+      // page shows the day + time so a tomorrow order never reads as
+      // an order for today.
+      scheduled_for: full.scheduled_for ?? null,
       payment_status: full.payment_status,
       kitchen_status: full.kitchen_status,
       shipday_status: full.shipday_status,
